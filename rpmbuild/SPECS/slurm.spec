@@ -6,7 +6,9 @@ License:            GPLv2+
 Group:              System Tools
 Source:             http://www.schedmd.com/download/latest/%{name}-%{version}.tar.bz2
 URL:                http://www.schedmd.com/
-Requires(pre):      /usr/sbin/useradd
+Requires(pre):      /bin/egrep /usr/sbin/useradd
+Requires(post):     /sbin/chkconfig /sbin/service
+Requires(post):     /sbin/service
 Requires:           glib2 hwloc munge ncurses openssl rrdtool
 BuildRequires:      gcc gcc-c++ glib2-devel hwloc-devel munge ncurses-devel openssl-devel rrdtool-devel
 
@@ -21,7 +23,14 @@ arbitrates contention for resources by managing a queue of pending
 work.
 
 %pre
-/usr/sbin/useradd --comment "Simple Linux Utility for Resource Management" --system --shell /sbin/nologin --home /var/slurm slurm || [[ $? -eq 9 ]]
+/bin/egrep '^slurm:' /etc/passwd > /dev/null || /usr/sbin/useradd --comment "Simple Linux Utility for Resource Management" --system --shell /sbin/nologin --home /var/slurm slurm
+
+%post
+/sbin/chkconfig --add slurm
+[[ -r /etc/slurm.conf ]] && /sbin/service slurm start
+
+%preun
+[[ -r /etc/slurm.conf ]] && /sbin/service slurm stop
 
 %prep
 %setup -q -n %{name}-%{version}
@@ -39,12 +48,23 @@ find . -name Makefile -exec sed -i -e 's!\(\(HWLOC\|MUNGE\|RRDTOOL\)_LDFLAGS\) =
 make %{?_smp_mflags}
 
 %install
+pwd
 rm -rf %{buildroot}
 %make_install
+# slurm's init.d scripts appear to have missing substitutions.
+pwd
+mkdir -p %{buildroot}/etc/init.d
+for initfile in slurm slurmdbd; do
+    sed -e 's/\${exec_prefix}/\/usr/g' etc/init.d.$initfile > %{buildroot}/etc/init.d/$initfile
+    chmod 755 %{buildroot}/etc/init.d/$initfile
+done;
+
 
 %files
 %doc AUTHORS ChangeLog COPYING DISCLAIMER INSTALL LICENSE.OpenSSL META NEWS README.rst RELEASE_NOTES
 /usr/share/doc/%{name}-%{version}
+%{_sysconfdir}/init.d/slurm
+%{_sysconfdir}/init.d/slurmdbd
 %{_bindir}/*
 %{_sbindir}/*
 %{_libdir}/*
