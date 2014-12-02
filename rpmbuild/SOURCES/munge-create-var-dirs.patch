@@ -1,0 +1,21 @@
+--- src/etc/munge.init.in.orig	2014-12-02 00:05:20.703780515 +0000
++++ src/etc/munge.init.in	2014-12-02 00:06:42.377912945 +0000
+@@ -138,6 +138,18 @@
+     [ -n "$GROUP" ] && chgrp "$GROUP" "$VARRUNDIR"
+   fi
+
++  if [ ! -d /var/log/munge ]; then
++    mkdir -m 755 -p /var/log/munge
++    [ -n "$USER" ] && chown "$USER" /var/log/munge
++    [ -n "$GROUP" ]  && chgrp "$GROUP" /var/log/munge
++  fi
++
++  if [ ! -d /var/lib/munge ]; then
++    mkdir -m 755 -p /var/lib/munge
++    [ -n "$USER" ] && chown "$USER" /var/log/munge
++    [ -n "$GROUP" ] && chgrp "$GROUP" /var/log/munge
++  fi;
++
+   case $SYSTEM in
+     DEBIAN)
+       if $0 status >/dev/null 2>&1; then

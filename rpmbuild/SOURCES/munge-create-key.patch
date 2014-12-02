@@ -1,0 +1,24 @@
+--- src/etc/munge.init.in.orig	2014-12-02 00:15:46.149572044 +0000
++++ src/etc/munge.init.in	2014-12-02 00:14:50.250869552 +0000
+@@ -150,6 +150,21 @@
+     [ -n "$GROUP" ] && chgrp "$GROUP" /var/log/munge
+   fi;
+
++  [ -n "$USER" ] && chown "$USER" /etc/munge
++  [ -n "$GROUP" ] && chgrp "$GROUP" /etc/munge
++
++  if [ ! -r /etc/munge/munge.key ]; then
++    if [ ! -d /etc/munge ]; then
++      mkdir -p /etc/munge
++    fi
++    oldmask=`umask`
++    umask 077
++    dd if=/dev/urandom bs=1024 count=1 of=/etc/munge/munge.key > /dev/null 2>&1
++    [ -n "$USER" ] && chown "$USER" /etc/munge/munge.key
++    [ -n "$GROUP" ] && chgrp "$GROUP" /etc/munge/munge.key
++    umask $oldmask
++  fi;
++
+   case $SYSTEM in
+     DEBIAN)
+       if $0 status >/dev/null 2>&1; then

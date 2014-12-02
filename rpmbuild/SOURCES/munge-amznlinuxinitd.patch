@@ -1,0 +1,18 @@
+--- src/etc/munge.init.in	2014-11-28 12:39:34.041469072 +0000
++++ src/etc/munge.init.in	2014-11-28 12:39:43.609280511 +0000
+@@ -87,6 +87,15 @@
+   elif [ -r /lib/lsb/init-functions ]; then
+     SYSTEM="LSB"
+     . /lib/lsb/init-functions
++  elif [ -r /etc/os-release ]; then
++    . /etc/os-release
++    if [ "\$ID" = "rhel" -o "\${ID_LIKE#rhel}" != "\${ID_LIKE}" ]; then
++      SYSTEM="REDHAT"
++      . /etc/rc.d/init.d/functions
++      RH_LOCK="/var/lock/subsys/$INIT_NAME"
++    else
++      SYSTEM="OTHER"
++    fi
+   else
+     SYSTEM="OTHER"
+   fi
