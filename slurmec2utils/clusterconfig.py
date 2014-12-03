@@ -1,8 +1,7 @@
 #!/usr/bin/python
 from __future__ import absolute_import, print_function
-from .instanceinfo import get_region, get_vpc_id
-import boto.s3
-from boto.s3.key import Key
+from .instanceinfo import get_instance_id, get_region, get_vpc_id
+import boto.ec2
 import boto.vpc
 from boto.vpc.subnet import Subnet
 from ConfigParser import DEFAULTSECT, RawConfigParser
@@ -12,6 +11,28 @@ from math import floor, log10
 from netaddr import IPAddress, IPNetwork
 from sys import argv, exit, stderr, stdout
 from types import NoneType
+
+def get_fallback_slurm_s3_root(region=None):
+    """
+    Get the SLURM S3 root by examining the tags applied to the instance.
+    This is used if the node has not (yet) been configured with an
+    /etc/slurm-ec2.conf file (the bootstrapping problem).
+    """
+    if region is None:
+        region = get_region()
+    instance_id = get_instance_id()
+    ec2 = boto.ec2.connect_to_region(region)
+    if ec2 is None:
+        raise ValueError("Unable to connect to EC2 endpoint in region %r" %
+                         (region,))
+    
+    tags = ec2.get_all_tags(filters={"resource-type": "instance",
+                                     "resource-id": instance_id,
+                                     "key": "SLURMEC2Root"})
+    if len(tags) == 0:
+        return None
+    
+    return tags[0].value
 
 class ClusterConfiguration(object):
     """
@@ -42,30 +63,38 @@ class ClusterConfiguration(object):
         'compute_instance_type': "c3.8xlarge",
         'compute_ami': None,
         'compute_bid_price': None,
+        'compute_os_packages': None,
+        'compute_external_packages': None,
         'app_config': None,
     }
 
-    # Keys which are lists in the config.
-    list_keys = {'node_subnet_ids', 'subnet_ids'}
+    # Keys which are lists in the slurm-ec2 config section.
+    list_keys = {'node_subnet_ids', 'compute_os_packages',
+                 'compute_external_packages'}
 
-    # Master configuration section
+    # Master configuration section name
     master_config_section = "slurm-ec2"
 
     def __init__(self, **kw):
         """
         ClusterConfiguration(
-            region=None, vpc_id=None, node_subnet_ids=None,
+            region=None, slurm_s3_root=None, vpc_id=None, node_subnet_ids=None,
             controller_address=None, backup_controller_address=None,
             controller_hostname="controller",
             backup_controller_hostname="backup-controller",
             node_hostname_prefix="node-", reserved_addresses=8,
             max_nodes=65535, compute_instance_type="c3.8xlarge",
-            compute_ami=None, compute_bid_price=None, app_config=None)
+            compute_ami=None, compute_bid_price=None, compute_os_packages=None,
+            compute_external_packages=None, app_config=None)
 
         Create a ClusterConfiguration object.
 
         region specifies the AWS region to use for querying AWS resources.
         If None, the region of the current instance is used.
+
+        slurm_s3_root specifies the S3 bucket and optional prefix (in
+        s3://<bucket>/<prefix> format) to use for downloading configuration
+        data from S3.
 
         vpc_id specifies the Virtual Private Cloud (VPC) to configure.
         If None, the VPC of the current instance is used.
@@ -107,6 +136,15 @@ class ClusterConfiguration(object):
         compute_bid_price specifies the bid price for requesting spot
         instances.  If None, on-demand instances are used.
 
+        compute_os_packages specifies the names of packages provided by the OS
+        vendor to install on compute nodes.  These are installed via
+        "yum install" (RedHat variants) or "apt-get install" (Debian variants).
+
+        compute_external_packages specifies the names of packages provided in
+        slurm_s3_root (under rpm/RPMS or deb).  These are downloaded and
+        installed via "rpm --install" (RedHat variants) or "dpkg --install"
+        (Debian variants).
+
         app_config, if specified, is a two-level dictionary of configuration
         information for applications.  Top level keys are written to
         slurm-ec2.conf as sections; second level keys are configuration keys.
@@ -118,6 +156,9 @@ class ClusterConfiguration(object):
 
         self.region = (kw['region'] if kw['region'] is not None
                        else get_region())
+        self.slurm_s3_root = (kw['slurm_s3_root']
+                              if kw['slurm_s3_root'] is not None
+                              else get_fallback_slurm_s3_root(self.region))
         self.vpc_id = (kw['vpc_id'] if kw['vpc_id'] is not None
                        else get_vpc_id())
 
@@ -158,6 +199,8 @@ class ClusterConfiguration(object):
         self.compute_instance_type = kw['compute_instance_type']
         self.compute_ami = kw['compute_ami']
         self.compute_bid_price = kw['compute_bid_price']
+        self.compute_os_packages = kw['compute_os_packages']
+        self.compute_external_packages = kw['compute_external_packages']
         self.app_config = kw['app_config']
         return
 
@@ -281,6 +324,8 @@ class ClusterConfiguration(object):
         conf = StringIO()
         conf.write("[slurm-ec2]\n")
         conf.write("region=%s\n" % self.region)
+        if self.slurm_s3_root is not None:
+            conf.write("slurm_s3_root=%s\n" % self.slurm_s3_root)
         conf.write("vpc_id=%s\n" % self.vpc_id)
         conf.write("node_subnet_ids=%s\n" % " ".join(
             [subnet.id for subnet in self.node_subnets]))
@@ -305,16 +350,25 @@ class ClusterConfiguration(object):
             conf.write("compute_ami=%s\n" % self.compute_ami)
         if self.compute_bid_price is not None:
             conf.write("compute_bid_price=%s\n" % self.compute_bid_price)
+        if self.compute_os_packages is not None:
+            conf.write("compute_os_packages=%s\n" %
+                       " ".join(self.compute_os_packages))
+        if self.compute_external_packages is not None:
+            conf.write("compute_external_packages=%s\n" %
+                       " ".join(self.compute_os_packages))
 
+        # Write out the VPC configuration
         conf.write("\n[%s]\n" % self.vpc_id)
         conf.write("subnet_ids=%s\n" % " ".join([
             subnet.id for subnet in self.all_subnets]))
 
+        # Write out each subnet configuration
         for subnet in self.all_subnets:
             conf.write("\n[%s]\n" % subnet.id)
             conf.write("cidr_block=%s\n" % subnet.cidr_block)
             conf.write("availability_zone=%s\n" % subnet.availability_zone)
 
+        # Write out any application-specific data.
         if self.app_config is not None:
             for appname, appdata in sorted(self.app_config.items()):
                 conf.write("\n[%s]\n" % appname)
@@ -475,13 +529,15 @@ PartitionName=cluster Nodes=node-[0-%(max_node)d] Default=yes
                 value = parse_list(value)
 
             kw[key] = value
-            
+
         if kw.get("vpc_id"):
-            # Parse the VPC section and all subnet sections.
+            # Parse the VPC section; get the list of subnets it contains.
             vpc_id = kw['vpc_id']
             subnet_ids = parse_list(cp.get(vpc_id, "subnet_ids"))
             subnets = []
 
+            # Parse each subnet and create a Boto subnet object without
+            # querying the EC2 endpoint.
             for subnet_id in subnet_ids:
                 cidr_block = cp.get(subnet_id, "cidr_block")
                 availability_zone = cp.get(subnet_id, "availability_zone")
@@ -532,6 +588,9 @@ def main():
         "-r", "--region",
         help=("The AWS region to use for querying AWS resources.  If "
               "unspecified, the region of the current instance is used."))
+    parser.add_argument(
+        "-S", "--slurm-s3-root",
+        help=("The S3 URL prefix containing SLURM cloud resources."))
     parser.add_argument(
         "-v", "--vpc-id",
         help=("The Virtual Private Cloud (VPC) to configure.  If unspecified, "

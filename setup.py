@@ -7,6 +7,7 @@ setup(
     entry_points={
         'console_scripts': [
             "slurm-ec2-clusterconfig=slurmec2utils.clusterconfig:main",
+            "slurm-ec2-fallback-slurm-s3-root=slurmec2utils.clusterconfig:get_fallback_slurm_s3_root",
         ],
     },
     install_requires=["boto>=2.0", "netaddr>=0.7",],

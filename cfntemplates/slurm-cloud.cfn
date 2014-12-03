@@ -1,0 +1,153 @@
+{
+    "AWSTemplateFormatVersion": "2010-09-09",
+    "Description": "Create a SLURM cluster for VBL.",
+
+    "Parameters": {
+        "ComputeInstanceType": {
+            "Type": "String",
+            "Default": "c3.8xlarge",
+            "Description": "SLURM compute node instance type",
+            "AllowedValues": [
+                "t2.micro", "t2.small", "t2.medium",
+                "m3.medium", "m3.large", "m3.xlarge", "m3.2xlarge",
+                "c3.large", "c3.xlarge", "c3.2xlarge", "c3.4xlarge",
+                "c3.8xlarge",
+                "r3.large", "r3.xlarge", "r3.2xlarge", "r3.4xlarge",
+                "r3.8xlarge",
+                "g2.2xlarge",
+                "i2.xlarge", "i2.2xlarge", "i2.4xlarge", "i2.8xlarge",
+                "hs1.8xlarge",
+                "c1.medium", "c1.xlarge", "cc2.8xlarge",
+                "cg1.4xlarge",
+                "cr1.8xlarge",
+                "hi1.4xlarge"
+            ],
+            "ConstraintDescription":
+            "must be an instance type supporting 64-bit HVM images"
+        },
+
+        "ComputeSpotInstanceBidPrice": {
+            "Type": "String",
+            "Default": "",
+            "Description": "Bid price for spot instances; leave black to use on-demand instances",
+            "AlowedPattern": "|[0-9][0-9]?(\.[0-9][0-9])?",
+            "ConstraintDescription":
+            "must be empty or an amount from 0.00 to 99.99"
+        },
+
+        "ControllerInstanceType": {
+            "Type": "String",
+            "Default": "t2.medium",
+            "Description": "SLURM controller instance type",
+            "AllowedValues": [
+                "t2.micro", "t2.small", "t2.medium",
+                "m3.medium", "m3.large", "m3.xlarge", "m3.2xlarge",
+                "c3.large", "c3.xlarge", "c3.2xlarge", "c3.4xlarge",
+                "c3.8xlarge",
+                "r3.large", "r3.xlarge", "r3.2xlarge", "r3.4xlarge",
+                "r3.8xlarge",
+                "g2.2xlarge",
+                "i2.xlarge", "i2.2xlarge", "i2.4xlarge", "i2.8xlarge",
+                "hs1.8xlarge",
+                "c1.medium", "c1.xlarge", "cc2.8xlarge",
+                "cg1.4xlarge",
+                "cr1.8xlarge",
+                "hi1.4xlarge"
+            ],
+            "ConstraintDescription":
+            "must be an instance type supporting 64-bit HVM images"
+        },
+
+        "EC2InstanceProfile": {
+            "Type": "String",
+            "Description": "The EC2 instance profile to apply to instances for programmatic access to AWS",
+            "MinLength": "0",
+            "MaxLength": "64",
+            "AllowedPattern": "[-A-Za-z0-9+=,.@_]*"
+        },
+
+        "KeyName": {
+            "Type": "AWS::EC2::KeyPair::KeyName",
+            "Default": "llnl",
+            "Description": "The SSH key to use for accessing the instance",
+            "MinLength": "1",
+            "ConstraintDescription":
+            "must be the name of an existing EC2 KeyPair"
+        },
+
+        "SecurityGroup": {
+            "Type": "String",
+            "Description": "The security group to apply to the instance",
+            "AllowedPattern": "sg-[0-9a-fA-F]+",
+            "ConstraintDescription":
+            "must be the name of an existing EC2 security group"
+        },
+
+        "SLURMS3Root": {
+            "Type": "String",
+            "Description":
+            "The S3 bucket (and prefix) containing SLURM resources",
+            "AllowedPattern": "s3://[-A-Za-z0-9]+(/[^/]+)?",
+            "ConstraintDescription":
+            "must be an S3 URL in the form s3://<bucket_name> or s3://<bucket_name>/<prefix>"
+        }
+    },
+
+    "Mappings": {
+        "RegionMap": {
+            "ap-northeast-1":   { "ami": "ami-4985b048" },
+            "ap-southeast-1":   { "ami": "ami-ac5c7afe" },
+            "ap-southeast-2":   { "ami": "ami-63f79559" },
+            "cn-north-1":       { "ami": "ami-ce46d4f7" },
+            "eu-central-1":     { "ami": "ami-b43503a9" },
+            "eu-west-1":        { "ami": "ami-6e7bd919" },
+            "sa-east-1":        { "ami": "ami-8737829a" },
+            "us-east-1":        { "ami": "ami-b66ed3de" },
+            "us-west-1":        { "ami": "ami-4b6f650e" },
+            "us-west-2":        { "ami": "ami-b5a7ea85" }
+        }
+    },
+
+    "Resources": {
+        "SLURMController": {
+            "Type": "AWS::EC2::Instance",
+            "Properties": {
+                "IamInstanceProfile": {"Ref": "EC2InstanceProfile"},
+                "ImageId": {"Fn::FindInMap":
+                            ["RegionMap", {"Ref": "AWS::Region"}, "ami"]},
+                "InstanceInitiatedShutdownBehavior": "terminate",
+                "InstanceType": {"Ref": "ControllerInstanceType"},
+                "KeyName": {"Ref": "KeyName"},
+                "NetworkInterfaces": [{
+                    "AssociatePublicIpAddress": "true",
+                    "DeleteOnTermination": "true",
+                    "DeviceIndex": "0",
+                    "GroupSet": [{"Ref": "SecurityGroup"}],
+                    "PrivateIpAddress": "192.168.0.4",
+                    "SubnetId": "subnet-eaed358f"
+                }],
+                "Tags": [
+                    { "Key": "Name", "Value": "SLURM Controller" },
+                    { "Key": "SLURMS3Root", "Value": {"Ref": "SLURMS3Root"} }
+                ],
+                "UserData": {"Fn::Base64": {"Fn::Join": ["", [
+                    "#!/bin/sh\n",
+                    "mkdir -p /var/lib/slurm-ec2-bootstrap\n",
+                    "aws s3 cp ", {"Ref": "SLURMS3Root"},
+                    "/packages/slurm-ec2-bootstrap ",
+                    "/var/lib/slurm-ec2-bootstrap\n",
+                    "chmod 755 /var/lib/slurm-ec2-bootstrap\n",
+                    "/var/lib/slurm-ec2-bootstrap ", {"Ref": "SLURMS3Root"},
+                    "\n"
+                ]]}}
+            }
+        }
+    }
+
+    "Outputs": {
+        "IPAddress": {
+            "Value": {"Fn::GetAtt": ["SLURMController", "PublicIp"]},
+            "Description": "Public IP address of the controller node"
+        }
+    }
+}             
