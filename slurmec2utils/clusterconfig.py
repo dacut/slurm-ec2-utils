@@ -47,6 +47,60 @@ class ClusterConfiguration(object):
     regenerate the other files.
     """
 
+    # SLURM features per instance type
+    slurm_features = {
+        "t2.micro": "CoresPerSocket=1 Feature=burst RealMemory=1024",
+        "t2.small": "CoresPerSocket=1 Feature=burst RealMemory=2048",
+        "t2.medium": "CoresPerSocket=2 Feature=burst RealMemory=4096",
+        "m3.medium": "CoresPerSocket=1 RealMemory=3840",
+        "m3.large": "CoresPerSocket=1 ThreadsPerCore=2 RealMemory=7680",
+        "m3.xlarge": "CoresPerSocket=2 ThreadsPerCore=2 RealMemory=15360",
+        "m3.2xlarge": "CoresPerSocket=4 ThreadsPerCore=2 RealMemory=30720",
+        "c3.large": "CoresPerSocket=1 ThreadsPerCore=2 RealMemory=3840",
+        "c3.xlarge": "CoresPerSocket=2 ThreadsPerCore=2 RealMemory=7680",
+        "c3.2xlarge": "CoresPerSocket=4 ThreadsPerCore=2 RealMemory=15360",
+        "c3.4xlarge": "CoresPerSocket=8 ThreadsPerCore=2 RealMemory=30720",
+        "c3.8xlarge": "CoresPerSocket=16 ThreadsPerCore=2 RealMemory=61440",
+        "r3.large": "CoresPerSocket=1 ThreadsPerCore=2 RealMemory=15616",
+        "r3.xlarge": "CoresPerSocket=2 ThreadsPerCore=2 RealMemory=31232",
+        "r3.2xlarge": "CoresPerSocket=4 ThreadsPerCore=2 RealMemory=62464",
+        "r3.4xlarge": "CoresPerSocket=8 ThreadsPerCore=2 RealMemory=124928",
+        "r3.8xlarge": "CoresPerSocket=16 ThreadsPerCore=2 RealMemory=249856",
+        "g2.2xlarge": "CoresPerSocket=4 ThreadsPerCore=2 RealMemory=15360",
+        "i2.xlarge": "CoresPerSocket=2 ThreadsPerCore=2 RealMemory=31232",
+        "i2.2xlarge": "CoresPerSocket=4 ThreadsPerCore=2 RealMemory=62464",
+        "i2.4xlarge": "CoresPerSocket=8 ThreadsPerCore=2 RealMemory=124928",
+        "i2.8xlarge": "CoresPerSocket=16 ThreadsPerCore=2 RealMemory=249856",
+        "hs1.8xlarge": "CoresPerSocket=8 ThreadsPerCore=2 RealMemory=119808",
+    }
+
+    # Ephemeral storage volume sizes (in GB) per instance type
+    ephemeral_stores = {
+        "t2.micro":     [],
+        "t2.small":     [],
+        "t2.medium":    [],
+        "m3.medium":    [4],
+        "m3.large":     [32],
+        "m3.xlarge":    [40] * 2,
+        "m3.2xlarge":   [80] * 2,
+        "c3.large":     [16] * 2,
+        "c3.xlarge":    [40] * 2,
+        "c3.2xlarge":   [80] * 2,
+        "c3.4xlarge":   [160] * 2,
+        "c3.8xlarge":   [320] * 2,
+        "r3.large":     [32],
+        "r3.xlarge":    [80],
+        "r3.2xlarge":   [160],
+        "r3.4xlarge":   [320],
+        "r3.8xlarge":   [320] * 2,
+        "g2.2xlarge":   [60],
+        "i2.xlarge":    [800],
+        "i2.2xlarge":   [800] * 2,
+        "i2.4xlarge":   [800] * 4,
+        "i2.8xlarge":   [800] * 8,
+        "hs1.8xlarge":  [2000] * 24,
+    }
+
     # Default values for the parser and constructor.
     defaults = {
         'region': None,
@@ -71,6 +125,9 @@ class ClusterConfiguration(object):
     # Keys which are lists in the slurm-ec2 config section.
     list_keys = {'node_subnet_ids', 'compute_os_packages',
                  'compute_external_packages'}
+
+    # Keys which are integers in the slurm-ec2 config section
+    int_keys = {'reserved_addresses', 'max_nodes'}
 
     # Master configuration section name
     master_config_section = "slurm-ec2"
@@ -311,6 +368,16 @@ class ClusterConfiguration(object):
             
         return hosts
 
+    def get_address_for_nodename(self, nodename):
+        """
+        Return the address for the given nodename.
+        """
+        if not nodename.startswith(self.node_hostname_prefix):
+            raise ValueError("Invalid node name %r" % (nodename,))
+        
+        node_id = int(nodename[len(self.node_hostname_prefix):])
+        return self.node_addresses[node_id]
+
     @property
     def slurm_ec2_configuration(self):
         """
@@ -394,6 +461,7 @@ class ClusterConfiguration(object):
             control.write("BackupAddr=%s\n" % backup_addr)
 
         control = control.getvalue().strip()
+        features = self.slurm_features.get(self.compute_instance_type, "")
         
         node_addresses = self.node_addresses
         max_node = len(self.node_addresses) - 1
@@ -444,11 +512,12 @@ SlurmdLogFile=/var/log/slurm/slurmd.log
 SlurmdDebug=3
 
 # COMPUTE NODES
-NodeName=node[0-%(max_node)d] NodeHostname=%(node_hostname_prefix)s[0-%(max_node)d] Weight=1 Feature=cloud State=CLOUD
+NodeName=%(node_hostname_prefix)s[0-%(max_node)d] Weight=1 Feature=cloud %(features)s State=CLOUD
 PartitionName=cluster Nodes=node-[0-%(max_node)d] Default=yes
 """ % {'control': control,
        'node_hostname_prefix': self.node_hostname_prefix,
-       'max_node': max_node}
+       'max_node': max_node,
+       'features': features}
 
     @property
     def hosts(self):
@@ -493,24 +562,25 @@ PartitionName=cluster Nodes=node-[0-%(max_node)d] Default=yes
         ClusterConfiguration.from_config(filename=None, fp=None)
 
         Read the configuration from the specified filename or file handle.
-        Exactly one must be specified.
+        If neither are specified, /etc/slurm-ec2.conf is used.
         """
         cp = RawConfigParser()
         app_config_cp = RawConfigParser()
 
         # Set up defaults here so we don't need try/except blocks around every
         # cp.get() call below.
-        for key, value in self.defaults.iteritems():
+        for key, value in cls.defaults.iteritems():
             cp.set(DEFAULTSECT, key, value)
 
-        if filename is None:
-            if fp is None:
-                raise ValueError("Either filename or fp must be specified")
+        if filename is None and fp is None:
+            filename = "/etc/slurm-ec2.conf"
+
+        if fp is not None:
+            if filename is not None:
+                raise ValueError("Cannot specify both filename and fp")
             cp.readfp(fp)
             app_config_cp.readfp(fp)
         else:
-            if fp is not None:
-                raise ValueError("Cannot specify both filename and fp")
             cp.read(filename)
             app_config_cp.read(filename)
 
@@ -521,12 +591,21 @@ PartitionName=cluster Nodes=node-[0-%(max_node)d] Default=yes
                 return None
             return value.split()
 
+        # Utility for converting a string into an int if present; returns
+        # None if not present
+        def parse_int(value):
+            if value is None:
+                return None
+            return int(value)
+
         kw = {}
-        for key in self.defaults.iterkeys():
+        for key in cls.defaults.iterkeys():
             value = cp.get(cls.master_config_section, key)
-            # Convert lists
+            # Convert lists and integers
             if key in cls.list_keys:
                 value = parse_list(value)
+            elif key in cls.int_keys:
+                value = parse_int(value)
 
             kw[key] = value
 
