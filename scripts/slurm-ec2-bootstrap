@@ -1,8 +1,9 @@
 #!/bin/sh
-set -x
+set -e -x
 SLURM_S3_ROOT="$1"
 MUNGE_VERSION="0.5.11-1.amzn1"
 SLURM_VERSION="14.11.1-1.amzn1"
+SLURM_EC2_UTILS_VERSION="0.1"
 ARCH="`uname -m`"
 
 MUNGE_RPM="munge-$MUNGE_VERSION.$ARCH.rpm"
@@ -10,8 +11,44 @@ SLURM_RPM="slurm-$SLURM_VERSION.$ARCH.rpm"
 MUNGE_URL="$SLURM_S3_ROOT/packages/$MUNGE_RPM"
 SLURM_URL="$SLURM_S3_ROOT/packages/$SLURM_RPM"
 
-SLURM_EC2_UTILS_TGZ="slurm-ec2-utils.tgz"
+SLURM_EC2_SET_HOSTNAME_URL="$SLURM_S3_ROOT/packages/slurm-ec2-set-hostname"
+SLURM_EC2_UTILS_TGZ="slurm-ec2-utils-${SLURM_EC2_UTILS_VERSION}.tar.gz"
 SLURM_EC2_UTILS_URL="$SLURM_S3_ROOT/packages/$SLURM_EC2_UTILS_TGZ"
+
+# If we have an existing ephemeral LVM, mount it.
+if ! mount -t ext4 -o noatime,discard /dev/vgephemeral/lgephemeral /ephemeral;
+then
+    # Doesn't exist or failed; (re)create the LVM array.
+    EPHEMERALS=""
+
+    # Some AMIs mount the ephemeral drives; unmount them.
+    for dev in /dev/xvd?; do
+        # Skip the root volume.
+        if [[ "$dev" == "/dev/xvda" ]]; then continue; fi;
+        if mount | grep $dev > /dev/null; then
+            if umount $dev; then
+                EPHEMERALS="$EPHEMERALS $dev";
+            fi
+        else
+            EPHEMERALS="$EPHEMERALS $dev";
+        fi;
+    done
+
+    # Create LVM physical volumes on the ephemerals.
+    if pvcreate $EPHEMERALS && vgcreate vgephemeral $EPHEMERALS && \
+        lvcreate --name lvephemeral --mirrors 0 --extents 100%VG --stripes 2 \
+        vgephemeral;
+    then
+        test -d /ephemeral || mkdir /ephemeral
+        mkfs.ext4 /dev/vgephemeral/lvephemeral
+        mount -o noatime,discard /dev/vgephemeral/lvephemeral /ephemeral
+    fi;
+fi
+
+# Make the ephemeral mount points restricted delete (like /tmp).
+if [[ -d /ephemeral ]] && mount | grep /ephemeral > /dev/null; then
+    chmod 1777 /ephemeral
+fi;
 
 # Update the OS
 yum -y update
@@ -24,17 +61,29 @@ python27-pip readline rrdtool
 pip-2.7 install boto netaddr
 
 # Download and install MUNGE and SLURM
-aws s3 cp "$MUNGE_URL" "/tmp/$MUNGE_RPM"
-aws s3 cp "$SLURM_URL" "/tmp/$SLURM_RPM"
-rpm --install "/tmp/$MUNGE_RPM" "/tmp/$SLURM_RPM"
-rm -f "/tmp/$MUNGE_RPM" "/tmp/$SLURM_RPM"
+if ! rpm --query munge; then
+    aws s3 cp "$MUNGE_URL" "/tmp/$MUNGE_RPM"
+    rpm --install "/tmp/$MUNGE_RPM"
+    rm -f "/tmp/$MUNGE_RPM"
+fi;
+
+if ! rpm --query slurm; then
+    aws s3 cp "$SLURM_URL" "/tmp/$SLURM_RPM"
+    rpm --install "/tmp/$SLURM_RPM"
+    rm -f "/tmp/$SLURM_RPM"
+fi;
+
+# Install and start slurm-ec2-set-hostname
+aws s3 cp "$SLURM_EC2_SET_HOSTNAME_URL" /etc/init.d/slurm-ec2-set-hostname
+chmod 755 /etc/init.d/slurm-ec2-set-hostname
+chkconfig --add slurm-ec2-set-hostname
+service slurm-ec2-set-hostname start
 
 # Install slurm-ec2-utils
 aws s3 cp "$SLURM_EC2_UTILS_URL" "/tmp/$SLURM_EC2_UTILS_TGZ"
-mkdir /tmp/slurm-ec2-utils-build
-tar -C /tmp/slurm-ec2-utils-build -xfz "/tmp/$SLURM_EC2_UTILS_TGZ"
-(cd /tmp/slurm-ec2-utils-build; python2.7 ./setup.py build && python2.7 ./setup.py install);
-rm -rf /tmp/slurm-ec2-utils-build "/tmp/$SLURM_EC2_UTILS_TGZ"
+tar -C /tmp -x -f "/tmp/$SLURM_EC2_UTILS_TGZ" -z
+(cd /tmp/slurm-ec2-utils-${SLURM_EC2_UTILS_VERSION}; python2.7 ./setup.py build && python2.7 ./setup.py install);
+rm -rf /tmp/slurm-ec2-utils-${SLURM_EC2_UTILS_VERSION} "/tmp/$SLURM_EC2_UTILS_TGZ"
 
 # Attempt to download an existing /etc/slurm-ec2.conf
 if ! aws s3 cp "$SLURM_S3_ROOT/etc/slurm-ec2.conf" /etc/slurm-ec2.conf; then
@@ -48,6 +97,31 @@ fi;
 slurm-ec2-clusterconfig --config /etc/slurm-ec2.conf \
     --write-hosts /etc/hosts \
     --write-slurm-config /etc/slurm.conf
+
+# Create /etc/munge/munge.key if not present.
+if [[ ! -r /etc/munge/munge.key ]]; then
+    mkdir -p /etc/munge;
+
+    # Try to download it.
+    if ! aws s3 cp "$SLURM_S3_ROOT/etc/munge.key" /etc/munge/munge.key; then
+        # Doesn't exist; create it and upload it.
+        dd if=/dev/urandom bs=1024 count=1 of=/etc/munge/munge.key;
+        aws s3 cp /etc/munge/munge.key "$SLURM_S3_ROOT/etc/munge.key";
+    fi;
+
+    chown -R munge:munge /etc/munge
+    chmod 600 /etc/munge/munge.key;
+fi;
+
+# Create the /var/log/slurm and /var/slurm directories if they don't exist
+if [[ ! -d /var/log/slurm ]]; then
+    mkdir -p /var/log/slurm
+    chown slurm:slurm /var/log/slurm
+fi;
+if [[ ! -d /var/slurm ]]; then
+    mkdir -p /var/slurm
+    chown slurm:slurm /var/slurm
+fi;
 
 # Start MUNGE and SLURM
 service munge start
