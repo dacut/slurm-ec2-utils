@@ -8,6 +8,8 @@ setup(
         'console_scripts': [
             "slurm-ec2-clusterconfig=slurmec2utils.clusterconfig:main",
             "slurm-ec2-fallback-slurm-s3-root=slurmec2utils.clusterconfig:get_fallback_slurm_s3_root",
+            "slurm-ec2-resume=slurmec2utils.powersave:start_node",
+            "slurm-ec2-suspend=slurmec2utils.powersave:stop_node",
         ],
     },
     install_requires=["boto>=2.0", "netaddr>=0.7",],
