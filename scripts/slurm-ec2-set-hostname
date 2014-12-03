@@ -1,0 +1,77 @@
+#!/bin/sh
+
+# chkconfig:        2345 40 60
+# description:      Set the hostname from the EC2 tag applied to this instance
+### BEGIN INIT INFO
+# Provides:         slurm-ec2-set-hostname
+# Required-Start:   $local_fs $network
+# Should-Start:
+# Required-Stop:
+# Should-Stop:
+# Default-Start:    2 3 4 5
+# Default-Stop:     1 6
+# X-Start-Before:   slurm
+# Description:      Set the hostname from the EC2 tag applied to this instance
+### END INIT INFO
+
+prog="slurm-ec2-set-hostname"
+awk=/bin/awk
+aws=/usr/bin/aws
+curl=/usr/bin/curl
+hostname=/bin/hostname
+sed=/bin/sed
+metadata="http://169.254.169.254/latest/meta-data"
+
+RETVAL=0
+
+start() {
+    local az region instance_id new_hostname
+    echo -n $"Starting $prog: "
+
+    az="`$curl --silent $metadata/placement/availability-zone`";
+    instance_id="`$curl --silent $metadata/instance-id`";
+    region="`echo $az | $sed -e 's/.$//'`";
+    
+    new_hostname="`$aws --output text --region $region ec2 describe-tags \
+        --filter "Name=resource-type,Values=instance" \
+        "Name=resource-id,Values=$instance_id" \
+        "Name=key,Values=SLURMHostname" | \
+        $awk -F '\t' '{print $5}'`";
+    
+    if [[ ! -z "$new_hostname" ]]; then
+        $hostname "$new_hostname"
+        RETVAL=$?
+    fi;
+
+    return $RETVAL;
+}
+
+stop() {
+    echo -n $"Shutting down $prog: "
+    RETVAL=7
+    return $RETVAL;
+}
+
+case "$1" in
+    start|restart|try-restart|condrestart|reload|force-reload)
+        start
+        RETVAL=$?;;
+
+    stop)
+        stop
+        RETVAL=$?;;
+    
+    status)
+        RETVAL=3;;
+
+    *)
+        echo "Usage: $0 {start|stop|status}"
+        RETVAL=3;;
+esac;
+
+exit $RETVAL
+
+
+    
+    
+    
