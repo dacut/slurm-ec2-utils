@@ -6,19 +6,22 @@ main () {
         case "$1" in
             --debug | --endpoint-url=* | --no-verify-ssl | --profile=* | \
                 --region=* )
-                AWS_FLAGS="$AWS_FLAGS \"$1\""; shift;;
+                AWS_FLAGS="$AWS_FLAGS $1"; shift;;
 
             --endpoint-url | --profile | --region )
-                AWS_FLAGS="$AWS_FLAGS $1 \"$2\""; shift 2;;
+                AWS_FLAGS="$AWS_FLAGS $1 $2"; shift 2;;
 
             -- )
                 shift;
                 break;;
 
-            * )
+            -* )
                 echo "Unknown argument $1" 1>&2;
                 usage;
                 exit 1;;
+
+            * )
+                break;
         esac
     done
 
@@ -32,11 +35,26 @@ main () {
 
     aws $AWS_FLAGS s3 cp ./scripts/slurm-ec2-bootstrap \
         "$SLURM_S3_ROOT/packages/slurm-ec2-bootstrap";
-    aws $AWS_FLAGS s3 cp ./cfntemplates/slurm-cloud.cfn \
-        "$SLURM_S3_ROOT/packages/slurm-ec2-bootstrap";
+    aws $AWS_FLAGS s3 cp ./cfn-templates/slurm-cloud.cfn \
+        "$SLURM_S3_ROOT/cfn-templates/slurm-cloud.cfn";
     python ./setup.py sdist
     aws $AWS_FLAGS s3 cp ./dist/slurm-ec2-utils-0.1.tar.gz \
         "$SLURM_S3_ROOT/packages/slurm-ec2-utils-0.1.tar.gz"
+    exit 0
 }
 
+usage () {
+    cat <<EOF 1>&2
+Usage: slurm-ec2-bootstrap-s3-bucket [aws-cli-options] s3://<bucket>[/<prefix>]
+Upload data from this directory to the given S3 URL.
 
+Allowed AWS CLI options:
+    --debug
+    --endpoint-url=<S3 endpoint>
+    --no-verify-ssl
+    --profile=<AWS CLI profile>
+    --region=<AWS region>
+EOF
+}
+
+main "$@"

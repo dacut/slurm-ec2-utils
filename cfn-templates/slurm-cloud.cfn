@@ -132,12 +132,13 @@
                 ],
                 "UserData": {"Fn::Base64": {"Fn::Join": ["", [
                     "#!/bin/sh\n",
-                    "mkdir -p /var/lib/slurm-ec2-bootstrap\n",
+                    "mkdir -p /var/lib/slurm-ec2\n",
                     "aws s3 cp ", {"Ref": "SLURMS3Root"},
                     "/packages/slurm-ec2-bootstrap ",
-                    "/var/lib/slurm-ec2-bootstrap\n",
-                    "chmod 755 /var/lib/slurm-ec2-bootstrap\n",
-                    "/var/lib/slurm-ec2-bootstrap ", {"Ref": "SLURMS3Root"},
+                    "/var/lib/slurm-ec2/slurm-ec2-bootstrap\n",
+                    "chmod 755 /var/lib/slurm-ec2/slurm-ec2-bootstrap\n",
+                    "/var/lib/slurm-ec2/slurm-ec2-bootstrap ",
+                    {"Ref": "SLURMS3Root"},
                     "\n"
                 ]]}}
             }
