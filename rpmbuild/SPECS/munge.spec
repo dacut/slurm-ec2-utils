@@ -33,10 +33,9 @@ methods.
 
 %post
 /sbin/chkconfig --level 2345 munge on
-/sbin/service munge start
 
 %preun
-/sbin/service munge stop
+/sbin/service munge stop || true
 
 %prep
 %setup -q -n %{name}-%{version}
