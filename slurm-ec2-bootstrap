@@ -1,0 +1,54 @@
+#!/bin/sh
+set -x
+SLURM_S3_ROOT="$1"
+MUNGE_VERSION="0.5.11-1.amzn1"
+SLURM_VERSION="14.11.1-1.amzn1"
+ARCH="`uname -m`"
+
+MUNGE_RPM="munge-$MUNGE_VERSION.$ARCH.rpm"
+SLURM_RPM="slurm-$SLURM_VERSION.$ARCH.rpm"
+MUNGE_URL="$SLURM_S3_ROOT/packages/$MUNGE_RPM"
+SLURM_URL="$SLURM_S3_ROOT/packages/$SLURM_RPM"
+
+SLURM_EC2_UTILS_TGZ="slurm-ec2-utils.tgz"
+SLURM_EC2_UTILS_URL="$SLURM_S3_ROOT/packages/$SLURM_EC2_UTILS_TGZ"
+
+# Update the OS
+yum -y update
+
+# Install common libraries utilities, and dependencies for MUNGE and SLURM
+yum -y install glib2 hwloc jq lua openmpi openssl patch python27 \
+python27-pip readline rrdtool
+
+# Install Python libraries
+pip-2.7 install boto netaddr
+
+# Download and install MUNGE and SLURM
+aws s3 cp "$MUNGE_URL" "/tmp/$MUNGE_RPM"
+aws s3 cp "$SLURM_URL" "/tmp/$SLURM_RPM"
+rpm --install "/tmp/$MUNGE_RPM" "/tmp/$SLURM_RPM"
+rm -f "/tmp/$MUNGE_RPM" "/tmp/$SLURM_RPM"
+
+# Install slurm-ec2-utils
+aws s3 cp "$SLURM_EC2_UTILS_URL" "/tmp/$SLURM_EC2_UTILS_TGZ"
+mkdir /tmp/slurm-ec2-utils-build
+tar -C /tmp/slurm-ec2-utils-build -xfz "/tmp/$SLURM_EC2_UTILS_TGZ"
+(cd /tmp/slurm-ec2-utils-build; python2.7 ./setup.py build && python2.7 ./setup.py install);
+rm -rf /tmp/slurm-ec2-utils-build "/tmp/$SLURM_EC2_UTILS_TGZ"
+
+# Attempt to download an existing /etc/slurm-ec2.conf
+if ! aws s3 cp "$SLURM_S3_ROOT/etc/slurm-ec2.conf" /etc/slurm-ec2.conf; then
+    # Doesn't exist; create it and upload it.
+    slurm-ec2-clusterconfig --slurm-s3-root "$SLURM_S3_ROOT" \
+        --write-slurm-ec2-config /etc/slurm-ec2.conf
+    aws s3 cp /etc/slurm-ec2.conf "$SLURM_S3_ROOT/etc/slurm-ec2.conf"
+fi;
+
+# Create /etc/hosts and /etc/slurm.conf
+slurm-ec2-clusterconfig --config /etc/slurm-ec2.conf \
+    --write-hosts /etc/hosts \
+    --write-slurm-config /etc/slurm.conf
+
+# Start MUNGE and SLURM
+service munge start
+service slurm start
