@@ -122,13 +122,15 @@ tar -C /tmp -x -f "/tmp/$SLURM_EC2_UTILS_TGZ" -z
 rm -rf /tmp/slurm-ec2-utils-${SLURM_EC2_UTILS_VERSION} "/tmp/$SLURM_EC2_UTILS_TGZ"
 
 # Attempt to download an existing /etc/slurm-ec2.conf
-if ! aws s3 cp "$SLURM_S3_ROOT/etc/slurm-ec2.conf" /etc/slurm-ec2.conf; then
-    # Doesn't exist; create it and upload it.
-    slurm-ec2-clusterconfig --region "$REGION" \
-        --slurm-s3-root "$SLURM_S3_ROOT" \
-        $CCARGS \
-        --write-slurm-ec2-config /etc/slurm-ec2.conf
-    aws s3 cp /etc/slurm-ec2.conf "$SLURM_S3_ROOT/etc/slurm-ec2.conf"
+if [[ ! -r /etc/slurm-ec2.conf ]]; then
+    if ! aws s3 cp "$SLURM_S3_ROOT/etc/slurm-ec2.conf" /etc/slurm-ec2.conf; then
+        # Doesn't exist; create it and upload it.
+        slurm-ec2-clusterconfig --region "$REGION" \
+            --slurm-s3-root "$SLURM_S3_ROOT" \
+            $CCARGS \
+            --write-slurm-ec2-config /etc/slurm-ec2.conf
+        aws s3 cp /etc/slurm-ec2.conf "$SLURM_S3_ROOT/etc/slurm-ec2.conf"
+    fi;
 fi;
 
 # Create /etc/hosts and /etc/slurm.conf
