@@ -33,7 +33,7 @@ main () {
 
     SLURM_S3_ROOT="$1";
 
-    for file in ./scripts/*; do
+    for file in ./packages/*; do
         case $file in
             *~ | "#"* ) ;;
             * )
