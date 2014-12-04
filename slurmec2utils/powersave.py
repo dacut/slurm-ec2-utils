@@ -49,6 +49,7 @@ def start_node():
         return 1
 
     slurm_s3_root = cc.slurm_s3_root
+    key_name = cc.key_name
     instance_type = cc.compute_instance_type
     ami = cc.compute_ami
     bid_price = cc.compute_bid_price
@@ -89,7 +90,7 @@ def start_node():
             ephemeral_name="ephemeral%d" % i)
 
     reservation = ec2.run_instances(
-        image_id=ami, key_name="llnl", network_interfaces=network_interfaces,
+        image_id=ami, key_name=key_name, network_interfaces=network_interfaces,
         instance_type=instance_type, instance_profile_name="PowerUser",
         block_device_map=block_device_map, user_data=user_data)
 

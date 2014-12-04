@@ -1,6 +1,6 @@
 #!/usr/bin/python
 from __future__ import absolute_import, print_function
-from .instanceinfo import get_instance_id, get_region, get_vpc_id
+from .instanceinfo import get_instance_id, get_instance, get_region, get_vpc_id
 import boto.ec2
 import boto.vpc
 from boto.vpc.subnet import Subnet
@@ -106,6 +106,7 @@ class ClusterConfiguration(object):
         'region': None,
         'slurm_s3_root': None,
         'vpc_id': None,
+        'key_name': None,
         'node_subnet_ids': None,
         'controller_address': None,
         'backup_controller_address': None,
@@ -135,9 +136,9 @@ class ClusterConfiguration(object):
     def __init__(self, **kw):
         """
         ClusterConfiguration(
-            region=None, slurm_s3_root=None, vpc_id=None, node_subnet_ids=None,
-            controller_address=None, backup_controller_address=None,
-            controller_hostname="controller",
+            region=None, slurm_s3_root=None, vpc_id=None, key_name=None,
+            node_subnet_ids=None, controller_address=None,
+            backup_controller_address=None, controller_hostname="controller",
             backup_controller_hostname="backup-controller",
             node_hostname_prefix="node-", reserved_addresses=8,
             max_nodes=65535, compute_instance_type="c3.8xlarge",
@@ -155,6 +156,9 @@ class ClusterConfiguration(object):
 
         vpc_id specifies the Virtual Private Cloud (VPC) to configure.
         If None, the VPC of the current instance is used.
+
+        key_name specifies the SSH key to apply to compute instances.  If
+        None, the key used for the controller is used.
 
         node_subnet_ids specifies the subnets in the VPC to use for SLURM
         computation nodes.  If None, all subnets in the VPC are used.
@@ -218,6 +222,8 @@ class ClusterConfiguration(object):
                               else get_fallback_slurm_s3_root(self.region))
         self.vpc_id = (kw['vpc_id'] if kw['vpc_id'] is not None
                        else get_vpc_id())
+        self.key_name = (kw['key_name'] if kw['key_name'] is not None
+                         else get_instance().key_name)
 
         if kw.get('_all_subnets') is None:
             vpc_conn = boto.vpc.connect_to_region(self.region)
@@ -394,6 +400,7 @@ class ClusterConfiguration(object):
         if self.slurm_s3_root is not None:
             conf.write("slurm_s3_root=%s\n" % self.slurm_s3_root)
         conf.write("vpc_id=%s\n" % self.vpc_id)
+        conf.write("key_name=%s\n" % self.key_name)
         conf.write("node_subnet_ids=%s\n" % " ".join(
             [subnet.id for subnet in self.node_subnets]))
         conf.write("controller_address=%s\n" % self.controller_address)
@@ -674,6 +681,10 @@ def main():
         "-v", "--vpc-id",
         help=("The Virtual Private Cloud (VPC) to configure.  If unspecified, "
               "the VPC of the current instance is used."))
+    parser.add_argument(
+        "-k", "--key-name",
+        help=("The SSH key name to use for launching new instances.  If "
+              "unspecified, the key name of the current instance is used."))
     parser.add_argument(
         "-n", "--node-subnet-id", "--node-subnet-ids",
         help=("The subnets in the VPC to use for SLURM computation nodes.  "

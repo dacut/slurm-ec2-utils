@@ -1,10 +1,35 @@
 #!/bin/sh
 set -e -x
-SLURM_S3_ROOT="$1"
+REGION="";
 MUNGE_VERSION="0.5.11-1.amzn1"
 SLURM_VERSION="14.11.1-1.amzn1"
 SLURM_EC2_UTILS_VERSION="0.1"
 ARCH="`uname -m`"
+
+
+CCARGS="";
+args=`getopt -l key-name: -l region: -l slurm-s3-root: -- k:r:S: "$@"`;
+if [[ $? -eq 0 ]]; then
+    eval set -- "$args";
+    while [[ $# -gt 0 ]]; do
+        case $1 in
+            --key-name | -k )
+                CCARGS="$CCARGS --key-name '$2'";
+                shift 2;;
+
+            --region | -r )
+                REGION="$2";
+                shift 2;;
+
+            --slurm-s3-root | -S )
+                SLURM_S3_ROOT="$2";
+                shift 2;;
+            
+            * )
+                shift;;
+        esac;
+    done;
+fi;
 
 MUNGE_RPM="munge-$MUNGE_VERSION.$ARCH.rpm"
 SLURM_RPM="slurm-$SLURM_VERSION.$ARCH.rpm"
@@ -88,7 +113,9 @@ rm -rf /tmp/slurm-ec2-utils-${SLURM_EC2_UTILS_VERSION} "/tmp/$SLURM_EC2_UTILS_TG
 # Attempt to download an existing /etc/slurm-ec2.conf
 if ! aws s3 cp "$SLURM_S3_ROOT/etc/slurm-ec2.conf" /etc/slurm-ec2.conf; then
     # Doesn't exist; create it and upload it.
-    slurm-ec2-clusterconfig --slurm-s3-root "$SLURM_S3_ROOT" \
+    slurm-ec2-clusterconfig --region "$REGION" \
+        --slurm-s3-root "$SLURM_S3_ROOT" \
+        $CCARGS \
         --write-slurm-ec2-config /etc/slurm-ec2.conf
     aws s3 cp /etc/slurm-ec2.conf "$SLURM_S3_ROOT/etc/slurm-ec2.conf"
 fi;
