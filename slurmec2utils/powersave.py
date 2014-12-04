@@ -8,9 +8,9 @@ from boto.ec2.networkinterface import (
 from .clusterconfig import ClusterConfiguration
 from .instanceinfo import get_instance_id, get_region, get_vpc_id
 from sys import argv, stderr
-from time import sleep
+from time import gmtime, sleep, strftime, time
 
-AMAZON_LINUX_AMI = {
+amazon_linux_ami = {
     "ap-northeast-1":   "ami-4985b048",
     "ap-southeast-1":   "ami-ac5c7afe",
     "ap-southeast-2":   "ami-63f79559",
@@ -23,13 +23,21 @@ AMAZON_LINUX_AMI = {
     "us-west-2":        "ami-b5a7ea85",
 }
 
-INIT_SCRIPT = """\
+init_script = """\
 #!/bin/sh
-mkdir -p /var/lib/slurm-ec2
+hostname '%(nodename)s'
+instance_id=`curl --silent http://169.254.169.254/latest/meta-data/instance-id`
+aws --region %(region)s ec2 create-tags $instance_id --tags \
+'Key=SLURMHostname,Value=%(hostname)s' \
+'Key=SLURMS3Root,Value=%(slurm_s3_root)s' \
+'Key=Name,Value=SLURM Computation Node %(nodename)s'
+cat > /etc/slurm-ec2.conf <<.EOF
+%(slurm_ec2_conf)s
+.EOF
 aws s3 cp %(slurm_s3_root)s/packages/slurm-ec2-bootstrap \
-/var/lib/slurm-ec2/slurm-ec2-bootstrap
-chmod 755 /var/lib/slurm-ec2/slurm-ec2-bootstrap
-/var/lib/slurm-ec2/slurm-ec2-bootstrap %(slurm_s3_root)s
+/usr/bin/slurm-ec2-bootstrap
+chmod 755 /usr/bin/slurm-ec2-bootstrap
+/usr/bin/slurm-ec2-bootstrap --slurm-s3-root '%(slurm_s3_root)s'
 """
 
 def start_node():
@@ -48,32 +56,43 @@ def start_node():
               file=stderr)
         return 1
 
+    kw = {}
     slurm_s3_root = cc.slurm_s3_root
-    key_name = cc.key_name
-    instance_type = cc.compute_instance_type
-    ami = cc.compute_ami
-    bid_price = cc.compute_bid_price
+
+    kw['image_id'] = (
+        cc.compute_ami if cc.compute_ami is not None
+        else amazon_linux_ami[region])
+    if cc.instance_profile is not None:
+        if cc.instance_profile.startswith("arn:"):
+            kw['instance_profile_arn'] = cc.instance_profile
+        else:
+            kw['instance_profile_name'] = cc.instance_profile
+    kw['key_name'] = cc.key_name
+    kw['instance_type'] = cc.compute_instance_type
+
+    if cc.compute_bid_price is not None:
+        start = time()
+        end = start + 24 * 60 * 60  # FIXME: Don't hardcode this.
+        kw['price'] = cc.compute_bid_price
+        kw['valid_from'] = strftime("%Y-%m-%dT%H:%M:%SZ", gmtime(start))
+        kw['valid_until'] = strftime("%Y-%m-%dT%H:%M:%SZ", gmtime(end))
+    
     node_address = cc.get_address_for_nodename(nodename)
     node_subnet = cc.get_subnet_for_address(node_address)
-    
-    if ami is None:
-        ami = AMAZON_LINUX_AMI[region]
-
-    user_data = INIT_SCRIPT % {"slurm_s3_root": slurm_s3_root}
+    user_data = init_script % {
+        "region": region,
+        "nodename": nodename,
+        "slurm_ec2_conf": cc.slurm_ec2_configuration,
+        "slurm_s3_root": slurm_s3_root,
+    }
     user_data = b64encode(user_data)
 
-    tags = {
-        "SLURMS3Root": slurm_s3_root,
-        "Name": "SLURM Computation Node %s" % (nodename,),
-        "SLURMHostname": nodename,
-    }
-    
     # Map the ethernet interface to the correct IP address
     eth0 = NetworkInterfaceSpecification(
         associate_public_ip_address=True,
         delete_on_termination=True,
         device_index=0,
-        groups=["sg-545fcc31"],
+        groups=cc.security_groups,
         private_ip_address=str(node_address),
         subnet_id=node_subnet.id)
 
@@ -89,20 +108,20 @@ def start_node():
         block_device_map[drive] = BlockDeviceType(
             ephemeral_name="ephemeral%d" % i)
 
-    reservation = ec2.run_instances(
-        image_id=ami, key_name=key_name, network_interfaces=network_interfaces,
-        instance_type=instance_type, instance_profile_name="PowerUser",
-        block_device_map=block_device_map, user_data=user_data)
+    if cc.compute_bid_price is None:
+        reservation = ec2.run_instances(**kw)
 
-    # create-tags can fail at times since the tag resource database is a bit
-    # behind EC2's actual state.
-    for i in xrange(10):
-        try:
-            ec2.create_tags([
-                instance.id for instance in reservation.instances], tags)
-            break
-        except:
-            sleep(0.5 * i)
+        # create-tags can fail at times since the tag resource database is
+        # a bit behind EC2's actual state.
+        for i in xrange(10):
+            try:
+                ec2.create_tags([
+                    instance.id for instance in reservation.instances], tags)
+                break
+            except:
+                sleep(0.5 * i)
+    else:
+        reservation = ec2.request_spot_instances(**kw)
 
     return 0
 
