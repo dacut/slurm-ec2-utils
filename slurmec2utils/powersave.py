@@ -34,6 +34,34 @@ aws --region %(region)s ec2 create-tags $instance_id --tags \
 cat > /etc/slurm-ec2.conf <<.EOF
 %(slurm_ec2_conf)s
 .EOF
+if [[ ! -z "%(os_packages)s" ]]; then
+    yum -y install %(os_packages)s;
+fi;
+
+for package in %(external_packages)s; do
+    tmpdir=`mktemp -d`
+    aws s3 cp %(slurm_s3_root)s/packages/$package $tmpdir/$package
+    case $package in
+        *.rpm )
+            rpm --install $tmpdir/$package;;
+
+        *.tgz | *.tar.gz )
+            tar -C / -x -z -f $tmpdir/$package;;
+
+        *.tbz2 | *.tar.bz2 )
+            tar -C / -x -j -f $tmpdir/$package;;
+
+        *.tZ | *.tar.Z )
+            tar -C / -x -Z -f $tmpdir/$package;;
+
+        * )
+            chmod 755 $tmpdir/$package;
+            mv $tmpdir/$package /usr/bin;;
+    esac;
+
+    rm -rf $tmpdir;
+done
+
 aws s3 cp %(slurm_s3_root)s/packages/slurm-ec2-bootstrap \
 /usr/bin/slurm-ec2-bootstrap
 chmod 755 /usr/bin/slurm-ec2-bootstrap
@@ -82,6 +110,14 @@ def start_node():
     user_data = init_script % {
         "region": region,
         "nodename": nodename,
+        "os_packages": " ".join(
+            cc.compute_os_packages
+            if cc.compute_os_packages is not None
+            else []),
+        "external_packages": " ".join(
+            cc.compute_external_packages
+            if cc.compute_external_packages is not None
+            else []),
         "slurm_ec2_conf": cc.slurm_ec2_configuration,
         "slurm_s3_root": slurm_s3_root,
     }
