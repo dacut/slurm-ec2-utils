@@ -8,13 +8,16 @@ ARCH="`uname -m`"
 
 
 CCARGS="";
-args=`getopt -l key-name: -l region: -l slurm-s3-root: -- k:r:S: "$@"`;
+args=`getopt -l compute-bid-price: -l compute-instance-type: -l key-name: \
+-l region: -l slurm-s3-root: -- p:i:k:r:S: "$@"`;
 if [[ $? -eq 0 ]]; then
     eval set -- "$args";
     while [[ $# -gt 0 ]]; do
         case $1 in
-            --key-name | -k )
-                CCARGS="$CCARGS --key-name '$2'";
+            --compute-bid-price | -p | \
+                --compute-instance-type | -i | \
+                --key-name | -k )
+                CCARGS="$CCARGS $1 $2";
                 shift 2;;
 
             --region | -r )
