@@ -1,10 +1,10 @@
 #!/bin/bash
 
-. /usr/bin/vbl-s3-root
-
 init() {
+    SLURM_S3_ROOT=`grep slurm_s3_root /etc/slurm-ec2.conf |
+                   awk -F = '{print $2}'`;
     DEFAULT_VBL_VERSION=1.7.0_8
-    DEFAULT_VBL_JAR_URL_BASE=`get_vbl_s3_root`/external
+    DEFAULT_VBL_JAR_URL_BASE=$SLURM_S3_ROOT/packages
 
     if [[ -d /ephemeral && -w /ephemeral ]]; then
         DEFAULT_VBL_DIR=/ephemeral;
@@ -167,9 +167,10 @@ if [[ ! -z "$CLASSPATH" ]]; then
 fi;
 
 # Generate a unique run id
-run_id=`dd if=/dev/urandom count=1 bs=32 2>/dev/null | base64 |
-  sed -e 's,/,,g' -e 's,+,,g' | xargs printf "%.16s"`;
-run_dir="$VBL_DIR/runs/${run_id}"
+datecode=`date -u +"%Y%m%d%H%M%S"`
+random=`dd if=/dev/urandom count=1 bs=8 2>/dev/null | od -An -tx8 | sed -e 's/ //g'`;
+run_id="$datecode-$random"
+run_dir="$VBL_DIR/runs/$run_id"
 src_prefix="`dirname "$VBL_INPUT"`";
 input_dir="$run_dir/input"
 input_file="$input_dir/`basename "$VBL_INPUT"`";
