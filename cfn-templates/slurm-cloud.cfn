@@ -10,6 +10,18 @@
             "Description": "Bid price for spot instances or 'ondemand'"
         },
 
+        "ComputeExternalPackages": {
+            "Type": String,
+            "Default": "",
+            "Description": "External packages to install from SLURMS3Root/packages"
+        },
+
+        "ComputeOSPackages": {
+            "Type": String,
+            "Default": "",
+            "Description": "OS packages to install via yum"
+        },
+
         "ComputeInstanceType": {
             "Type": "String",
             "Default": "c3.8xlarge",
@@ -142,6 +154,10 @@
                     "--compute-bid-price '", {"Ref": "ComputeBidPrice"}, "' ",
                     "--compute-instance-type '",
                     {"Ref": "ComputeInstanceType"}, "' ",
+                    "--compute-os-packages '",
+                    {"Ref": "ComputeOSPackages"}, "' ",
+                    "--compute-external-packages '",
+                    {"Ref": "ComputeExternalPackages"}, "' ",
                     "--instance-profile '", {"Ref": "InstanceProfile"}, "' ",
                     "--security-groups '", {"Ref": "SecurityGroup"}, "' ",
                     "\n"

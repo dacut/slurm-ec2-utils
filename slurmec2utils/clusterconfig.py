@@ -739,6 +739,12 @@ def main():
         help=("The bid price for requesting spot instances.  If unspecified, "
               "on-demand instances are used."))
     parser.add_argument(
+        "--compute-os-packages", action="append",
+        help=("OS packages to install via yum."))
+    parser.add_argument(
+        "--compute-external-packages", action="append",
+        help=("External packages to install from SLURMS3Root/external."))
+    parser.add_argument(
         "--app-config", "-X", action='append', default=[],
         help=("Application-specific configuration in the form "
               "<app>:<key>=<value>."))

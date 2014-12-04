@@ -9,8 +9,9 @@ ARCH="`uname -m`"
 
 CCARGS="";
 args=`getopt -l compute-bid-price: -l compute-instance-type: \
--l instance-profile: -l key-name: -l region: -l security-groups: \
--l slurm-s3-root: -- p:i:I:k:r:s:S: "$@"`;
+-l compute-external-packages: -l compute-os-packages: -l instance-profile: \
+-l key-name: -l region: -l security-groups: -l slurm-s3-root: -- \
+p:i:I:k:r:s:S: "$@"`;
 if [[ $? -eq 0 ]]; then
     eval set -- "$args";
     while [[ $# -gt 0 ]]; do
@@ -26,6 +27,10 @@ if [[ $? -eq 0 ]]; then
                 --key-name | -k | \
                 --security-groups | -s )
                 CCARGS="$CCARGS $1 $2";
+                shift 2;;
+
+            --compute-external-packages | --compute-os-packages )
+                CCARGS="$CCARGS $1 '$2'";
                 shift 2;;
 
             --region | -r )
