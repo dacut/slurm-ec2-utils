@@ -106,7 +106,9 @@ class ClusterConfiguration(object):
         'region': None,
         'slurm_s3_root': None,
         'vpc_id': None,
+        'instance_profile': None,
         'key_name': None,
+        'security_groups': None,
         'node_subnet_ids': None,
         'controller_address': None,
         'backup_controller_address': None,
@@ -124,7 +126,7 @@ class ClusterConfiguration(object):
     }
 
     # Keys which are lists in the slurm-ec2 config section.
-    list_keys = {'node_subnet_ids', 'compute_os_packages',
+    list_keys = {'security_groups', 'node_subnet_ids', 'compute_os_packages',
                  'compute_external_packages'}
 
     # Keys which are integers in the slurm-ec2 config section
@@ -215,15 +217,22 @@ class ClusterConfiguration(object):
         kw = tmpkw
         del tmpkw
 
-        self.region = (kw['region'] if kw['region'] is not None
-                       else get_region())
-        self.slurm_s3_root = (kw['slurm_s3_root']
-                              if kw['slurm_s3_root'] is not None
-                              else get_fallback_slurm_s3_root(self.region))
-        self.vpc_id = (kw['vpc_id'] if kw['vpc_id'] is not None
-                       else get_vpc_id())
-        self.key_name = (kw['key_name'] if kw['key_name'] is not None
-                         else get_instance().key_name)
+        self.region = (
+            kw['region'] if kw['region'] is not None else get_region())
+        self.slurm_s3_root = (
+            kw['slurm_s3_root'] if kw['slurm_s3_root'] is not None
+            else get_fallback_slurm_s3_root(self.region))
+        self.vpc_id = (
+            kw['vpc_id'] if kw['vpc_id'] is not None else get_vpc_id())
+        self.instance_profile = (
+            kw['instance_profile'] if kw['instance_profile'] is not None
+            else get_instance().instance_profile['arn'])
+        self.key_name = (
+            kw['key_name'] if kw['key_name'] is not None
+            else get_instance().key_name)
+        self.security_groups = (
+            kw['security_groups'] if kw['security_groups'] is not None
+            else [g.id for g in get_instance().groups])
 
         if kw.get('_all_subnets') is None:
             vpc_conn = boto.vpc.connect_to_region(self.region)
@@ -260,7 +269,9 @@ class ClusterConfiguration(object):
         self.reserved_addresses = kw['reserved_addresses']
         self.max_nodes = kw['max_nodes']
         self.compute_instance_type = kw['compute_instance_type']
-        self.compute_ami = kw['compute_ami']
+        self.compute_ami = (
+            kw['compute_ami'] if kw['compute_ami'] is not None
+            else get_instance().image_id)
         self.compute_bid_price = kw['compute_bid_price']
         self.compute_os_packages = kw['compute_os_packages']
         self.compute_external_packages = kw['compute_external_packages']
@@ -396,40 +407,25 @@ class ClusterConfiguration(object):
         # read.
         conf = StringIO()
         conf.write("[slurm-ec2]\n")
-        conf.write("region=%s\n" % self.region)
-        if self.slurm_s3_root is not None:
-            conf.write("slurm_s3_root=%s\n" % self.slurm_s3_root)
-        conf.write("vpc_id=%s\n" % self.vpc_id)
-        conf.write("key_name=%s\n" % self.key_name)
+
+        for attr in ["region", "slurm_s3_root", "vpc_id", "instance_profile",
+                     "key_name", "security_groups", "controller_address",
+                     "backup_controller_address", "controller_hostname",
+                     "backup_controller_hostname", "node_hostname_prefix",
+                     "reserved_addresses", "max_nodes",
+                     "compute_instance_type", "compute_ami",
+                     "compute_bid_price", "compute_os_packages",
+                     "compute_external_packages"]:
+            value = getattr(self, attr)
+            if value is None:
+                pass
+            elif isinstance(value, (list, tuple)):
+                conf.write("%s=%s\n" % (attr, " ".join(
+                    [str(el) for el in value])))
+            else:
+                conf.write("%s=%s\n" % (attr, value))
         conf.write("node_subnet_ids=%s\n" % " ".join(
             [subnet.id for subnet in self.node_subnets]))
-        conf.write("controller_address=%s\n" % self.controller_address)
-        conf.write("controller_hostname=%s\n" % self.controller_hostname)
-        
-        backup_addr = self.backup_controller_address
-        if backup_addr is not None:
-            conf.write("backup_controller_address=%s\n" %
-                       self.backup_controller_address)
-            conf.write("backup_controller_hostname=%s\n" %
-                       self.backup_controller_hostname)
-
-        conf.write("node_hostname_prefix=%s\n" % self.node_hostname_prefix)
-        conf.write("reserved_addresses=%d\n" % self.reserved_addresses)
-        
-        if self.max_nodes is not None:
-            conf.write("max_nodes=%d\n" % self.max_nodes)
-
-        conf.write("compute_instance_type=%s\n" % self.compute_instance_type)
-        if self.compute_ami is not None:
-            conf.write("compute_ami=%s\n" % self.compute_ami)
-        if self.compute_bid_price is not None:
-            conf.write("compute_bid_price=%s\n" % self.compute_bid_price)
-        if self.compute_os_packages is not None:
-            conf.write("compute_os_packages=%s\n" %
-                       " ".join(self.compute_os_packages))
-        if self.compute_external_packages is not None:
-            conf.write("compute_external_packages=%s\n" %
-                       " ".join(self.compute_os_packages))
 
         # Write out the VPC configuration
         conf.write("\n[%s]\n" % self.vpc_id)
@@ -671,76 +667,83 @@ def main():
     parser = ArgumentParser(
         description="Process slurm-ec2-utils configuration information")
     parser.add_argument(
-        "-r", "--region",
+        "--region", "-r",
         help=("The AWS region to use for querying AWS resources.  If "
               "unspecified, the region of the current instance is used."))
     parser.add_argument(
-        "-S", "--slurm-s3-root",
+        "--slurm-s3-root", "-S",
         help=("The S3 URL prefix containing SLURM cloud resources."))
     parser.add_argument(
-        "-v", "--vpc-id",
+        "--vpc-id", "-v",
         help=("The Virtual Private Cloud (VPC) to configure.  If unspecified, "
               "the VPC of the current instance is used."))
     parser.add_argument(
-        "-k", "--key-name",
+        "--instance-profile", "-I",
+        help=("The EC2 instance profile for launching new instances.  If "
+              "unspecified, the instance profile of the current instance is "
+              "used."))
+    parser.add_argument(
+        "--key-name", "-k",
         help=("The SSH key name to use for launching new instances.  If "
               "unspecified, the key name of the current instance is used."))
     parser.add_argument(
-        "-n", "--node-subnet-id", "--node-subnet-ids",
+        "--security-groups", "--security-group", "-s", action="append",
+        help=("The security groups to apply to new instances.  If "
+              "unspecified, the security groups of the current instance are "
+              "used"))
+    parser.add_argument(
+        "--node-subnet-ids", "--node-subnet-id", "-n", action="append",
         help=("The subnets in the VPC to use for SLURM computation nodes.  "
               "If unspecified, all subnets in the VPC are used."))
     parser.add_argument(
-        "-c", "--controller-address",
+        "--controller-address", "-c",
         help=("The address to use for the SLURM controller.  If \"auto\" or "
               "unspecified, the lowest VPC subnet CIDR base is taken and an "
               "offset of 4 is used.  Note that AWS reserves the first three "
               "addresses at the base of each subnet."))
     parser.add_argument(
-        "-b", "--backup-controller-address",
+        "--backup-controller-address", "-b",
         help=("The address to use for the SLURM backup controller.  If "
               "unspecified, a backup controller is not used.  If this is set "
               "to \"auto\", the lowest VPC subnet in a different availability "
               "zone from the primary controller is taken and an offset of 4 "
               "is used."))
     parser.add_argument(
-        "-C", "--controller-hostname", default="controller",
+        "--controller-hostname", "-C", default="controller",
         help=("The hostname to use for the primary controller.  Defaults to "
               "\"controller\"."))
     parser.add_argument(
-        "-B", "--backup-controller-hostname",
-        default="backup-controller",
+        "--backup-controller-hostname", "-B", default="backup-controller",
         help=("The hostname to use for the backup controller.  Defaults to "
               "\"backup-controller\"."))
     parser.add_argument(
-        "-N", "--node-hostname-prefix", default="node-",
+        "--node-hostname-prefix", "-N", default="node-",
         help=("The hostname prefix to use for computation nodes."))
     parser.add_argument(
-        "-R", "--reserved-addresses", type=int,
-        choices=xrange(4, 65530), default=8,
+        "--reserved-addresses", "-R", type=int, default=8,
         help=("How many addresses in each subnet are to be reserved for "
               "non-compute purposes."))
     parser.add_argument(
-        "-m", "--max-nodes", type=int,
-        choices=xrange(1, 65535), default=65535,
+        "--max-nodes", "-m", type=int, default=65535,
         help=("The maximum number of SLURM computation nodes."))
     parser.add_argument(
-        "-i", "--compute-instance-type", default="c3.8xlarge",
+        "--compute-instance-type", "-i", default="c3.8xlarge",
         help=("The EC2 instance type to use for computation nodes.  This "
               "defaults to c3.8xlarge"))
     parser.add_argument(
-        "-a", "--compute-ami",
+        "--compute-ami", "-a",
         help=("The Amazon Machine Image (AMI) id to use for computation "
-              "nodes.  This defaults to the Amazon Linux AMI for the region."))
+              "nodes.  This defaults to the image of the current instance."))
     parser.add_argument(
-        "-p", "--compute-bid-price",
+        "--compute-bid-price", "-p",
         help=("The bid price for requesting spot instances.  If unspecified, "
               "on-demand instances are used."))
     parser.add_argument(
-        "-X", "--app-config", action='append', default=[],
+        "--app-config", "-X", action='append', default=[],
         help=("Application-specific configuration in the form "
               "<app>:<key>=<value>."))
     parser.add_argument(
-        "-f", "--config",
+        "--config", "-f",
         help=("Read a slurm-ec2-utils configuration file for values."))
     parser.add_argument(
         "--write-slurm-config", action='append',
@@ -757,6 +760,20 @@ def main():
 
     ns = parser.parse_args()
     kw = vars(ns)
+
+    # Flatten list keys
+    for key in ClusterConfiguration.list_keys:
+        if key in kw and kw[key] is not None:
+            result = []
+            for element in kw[key]:
+                if " " in element:
+                    result.extend([el.strip() for el in element.split()])
+                elif "," in element:
+                    result.extend([el.strip() for el in element.split(",")])
+                else:
+                    result.append(element)
+            kw[key] = result
+    
     config_filename = kw.pop("config", None)
 
     # Parse --app-config items.
