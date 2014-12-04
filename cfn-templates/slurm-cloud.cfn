@@ -11,7 +11,7 @@
         },
 
         "ComputeExternalPackages": {
-            "Type": String,
+            "Type": "String",
             "Default": "",
             "Description": "External packages to install from SLURMS3Root/packages"
         },
@@ -40,7 +40,7 @@
         },
 
         "ComputeOSPackages": {
-            "Type": String,
+            "Type": "String",
             "Default": "",
             "Description": "OS packages to install via yum"
         },
