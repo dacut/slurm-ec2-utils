@@ -3,6 +3,13 @@
     "Description": "Create a SLURM cluster for VBL.",
 
     "Parameters": {
+        "ComputeBidPrice": {
+            "Type": "String",
+            "Default": "ondemand",
+            "AllowedPattern": "ondemand|[0-9][0-9]?\\.[0-9][0-9]",
+            "Description": "Bid price for spot instances or 'ondemand'"
+        },
+
         "ComputeInstanceType": {
             "Type": "String",
             "Default": "c3.8xlarge",
@@ -24,15 +31,6 @@
             ],
             "ConstraintDescription":
             "must be an instance type supporting 64-bit HVM images"
-        },
-
-        "ComputeSpotInstanceBidPrice": {
-            "Type": "String",
-            "Default": "",
-            "Description": "Bid price for spot instances; leave black to use on-demand instances",
-            "AlowedPattern": "|[0-9][0-9]?(\.[0-9][0-9])?",
-            "ConstraintDescription":
-            "must be empty or an amount from 0.00 to 99.99"
         },
 
         "ControllerInstanceType": {
@@ -58,7 +56,7 @@
             "must be an instance type supporting 64-bit HVM images"
         },
 
-        "EC2InstanceProfile": {
+        "InstanceProfile": {
             "Type": "String",
             "Description": "The EC2 instance profile to apply to instances for programmatic access to AWS",
             "MinLength": "0",
@@ -68,7 +66,6 @@
 
         "KeyName": {
             "Type": "AWS::EC2::KeyPair::KeyName",
-            "Default": "llnl",
             "Description": "The SSH key to use for accessing the instance",
             "MinLength": "1",
             "ConstraintDescription":
@@ -104,7 +101,8 @@
             "sa-east-1":        { "ami": "ami-8737829a" },
             "us-east-1":        { "ami": "ami-b66ed3de" },
             "us-west-1":        { "ami": "ami-4b6f650e" },
-            "us-west-2":        { "ami": "ami-b5a7ea85" }
+            "us-west-2":        { "ami": "ami-a9d88f99" },
+            "us-west-2-orig":   { "ami": "ami-b5a7ea85" }
         }
     },
 
@@ -112,7 +110,7 @@
         "SLURMController": {
             "Type": "AWS::EC2::Instance",
             "Properties": {
-                "IamInstanceProfile": {"Ref": "EC2InstanceProfile"},
+                "IamInstanceProfile": {"Ref": "InstanceProfile"},
                 "ImageId": {"Fn::FindInMap":
                             ["RegionMap", {"Ref": "AWS::Region"}, "ami"]},
                 "InstanceInitiatedShutdownBehavior": "terminate",
@@ -128,22 +126,29 @@
                 }],
                 "Tags": [
                     { "Key": "Name", "Value": "SLURM Controller" },
+                    { "Key": "SLURMHostname", "Value": "controller" },
                     { "Key": "SLURMS3Root", "Value": {"Ref": "SLURMS3Root"} }
                 ],
                 "UserData": {"Fn::Base64": {"Fn::Join": ["", [
                     "#!/bin/sh\n",
-                    "mkdir -p /var/lib/slurm-ec2\n",
                     "aws s3 cp ", {"Ref": "SLURMS3Root"},
                     "/packages/slurm-ec2-bootstrap ",
-                    "/var/lib/slurm-ec2/slurm-ec2-bootstrap\n",
-                    "chmod 755 /var/lib/slurm-ec2/slurm-ec2-bootstrap\n",
-                    "/var/lib/slurm-ec2/slurm-ec2-bootstrap ",
-                    {"Ref": "SLURMS3Root"},
+                    "/usr/bin/slurm-ec2-bootstrap\n",
+                    "chmod 755 /usr/bin/slurm-ec2-bootstrap\n",
+                    "/usr/bin/slurm-ec2-bootstrap ",
+                    "--region '", {"Ref": "AWS::Region"}, "' ",
+                    "--slurm-s3-root '", {"Ref": "SLURMS3Root"}, "' ",
+                    "--key-name '", {"Ref": "KeyName"}, "' ",
+                    "--compute-bid-price '", {"Ref": "ComputeBidPrice"}, "' ",
+                    "--compute-instance-type '",
+                    {"Ref": "ComputeInstanceType"}, "' ",
+                    "--instance-profile '", {"Ref": "InstanceProfile"}, "' ",
+                    "--security-groups '", {"Ref": "SecurityGroup"}, "' ",
                     "\n"
                 ]]}}
             }
         }
-    }
+    },
 
     "Outputs": {
         "IPAddress": {
