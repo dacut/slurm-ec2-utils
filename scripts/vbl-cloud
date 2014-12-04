@@ -1,0 +1,244 @@
+#!/bin/bash
+
+. /usr/bin/vbl-s3-root
+
+init() {
+    DEFAULT_VBL_VERSION=1.7.0_8
+    DEFAULT_VBL_JAR_URL_BASE=`get_vbl_s3_root`/external
+
+    if [[ -d /ephemeral && -w /ephemeral ]]; then
+        DEFAULT_VBL_DIR=/ephemeral;
+    else
+        DEFAULT_VBL_DIR=/tmp/vbl;
+    fi;
+
+    VBL_VERSION=$DEFAULT_VBL_VERSION
+    VBL_JAR_URL_BASE=$DEFAULT_VBL_JAR_URL_BASE
+    JAVA=/usr/bin/java
+    VBL_DIR=$DEFAULT_VBL_DIR
+
+    JAVA_ARGS=""
+    CLASSPATH=""
+    VBL_ARGS=""
+    VBL_INPUT=""
+    VBL_OUTPUT=""
+}
+
+parse_args() {
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            -h | -help | --help )
+                usage;
+                exit 0;;
+
+            -cp | -classpath )
+                if [[ $# -lt 2 ]]; then
+                    echo "Argument expected after $1" 1>&2;
+                    usage;
+                    exit 1;
+                fi;
+                CLASSPATH="$1"
+                shift 2;;
+
+            -vbl-version=* | --vbl-version=* )
+                VBL_VERSION=${1/?-vbl-version=/};
+                shift;;
+            
+            -vbl-version | --vbl-version )
+                if [[ $# -lt 2 ]]; then
+                    echo "Argument expected after $1" 1>&2;
+                    usage;
+                    exit 1;
+                fi;
+                VBL_VERSION="$2";
+                shift 2;;
+
+            -vbl-jar-url-base=* | --vbl-jar-url-base=* )
+                VBL_JAR_URL_BASE=${1/?-vbl-jar-url-base=/};
+                shift;;
+
+            -vbl-jar-url-base | --vbl-jar-url-base )
+                if [[ $# -lt 2 ]]; then
+                    echo "Argument expected after $1" 1>&2;
+                    usage;
+                    exit 1;
+                fi;
+                VBL_JAR_URL_BASE="$2";
+                shift 2;;
+
+            -d32 | -d64 | -server | \
+                -D* | -verbose | -verbose:* | -version | version:* | \
+                -showversion | \
+                -jre-restrict-search | -no-jre-restrict-search | \
+                -X* | \
+                -ea | -ea:* | -enableassertions | -enableassertions:* | \
+                -da | -da:* | -disableassertions | -disableassertions:* | \
+                -agentlib:* | -agentpath:* | -javaagent:* )
+                JAVA_ARGS="$JAVA_ARGS $1";
+                shift;;
+
+            input )
+                if [[ $# -lt 2 ]]; then
+                    echo "Argument expected after input" 1>&2;
+                    exit 1;
+                fi;
+
+                VBL_INPUT="$2";
+                shift 2;;
+
+            output )
+                if [[ $# -lt 2 ]]; then
+                    echo "Argument expected after output" 1>&2;
+                    exit 1;
+                fi;
+
+                VBL_OUTPUT="$2";
+                shift 2;;
+
+            * )
+                VBL_ARGS="$VBL_ARGS $1";
+                shift;;
+        esac;
+    done;
+}
+
+usage() {
+    cat <<EOF 1>&2
+Usage: vbl-cloud [options] input <input-url> output <output-url-base>
+
+Options are either Java options (run 'java' for details), VBL options, or
+one of the following:
+    --vbl-version=<version>
+        Use the specified version of the VBL runtime.
+        Defaults to $DEFAULT_VBL_VERSION
+
+    --vbl-jar-url-base=s3://<bucket>/<path>
+        Look for the VBL JAR file in the specified S3 location.  The actual
+        JAR file will be this path plus "/vbl-<vbl-version>.jar".
+        Defaults to $DEFAULT_VBL_JAR_URL_BASE
+
+VBL options as of 1.7.8:
+    -v                 [N/A]  prints out the version information
+    -gui               [off]  launch the VBL graphical user interface
+    -nosweepdir        [off]  for sweep calculations do not modify the
+                              output directory name with the sweep parameters
+    -nologging         [off]  turn log4j logging to error level
+    -nojafama          [off]  do not use Jafama's FastMath library, use
+                              default Java Math
+    -offline           [off]  do not access webdav or graphics routines
+    -vblbin            [off]  generate locally compiled vblbin files from
+                              auxfiles
+EOF
+} 
+
+init;
+parse_args "$@";
+
+if [[ -z "$VBL_INPUT" ]]; then
+    echo "No VBL input URL specified." 1>&2;
+    usage;
+    exit 1;
+fi;
+
+case "$VBL_INPUT" in
+    s3://*/* ) ;;
+    * )
+        echo "VBL input must be an S3 object in the form s3://<bucket>/<path>" 1>&2;
+        usage;
+        exit 1;;
+esac
+
+if [[ -z "$VBL_OUTPUT" ]]; then
+    echo "No VBL output URL specified." 1>&2;
+    usage;
+    exit 1;
+fi;
+
+case "$VBL_OUTPUT" in
+    s3://*/* ) ;;
+    * )
+        echo "VBL output must be an S3 prefix in the form s3://<bucket>/<path>" 1>&2;
+        usage;
+        exit 1;;
+esac;
+
+if [[ ! -z "$CLASSPATH" ]]; then
+    JAVA_ARGS="-classpath '$CLASSPATH' $JAVA_ARGS";
+fi;
+
+# Generate a unique run id
+run_id=`dd if=/dev/urandom count=1 bs=32 2>/dev/null | base64 |
+  sed -e 's,/,,g' -e 's,+,,g' | xargs printf "%.16s"`;
+run_dir="$VBL_DIR/runs/${run_id}"
+src_prefix="`dirname "$VBL_INPUT"`";
+input_dir="$run_dir/input"
+input_file="$input_dir/`basename "$VBL_INPUT"`";
+output_dir="$run_dir/output"
+
+# Create the various VBL directories
+if ! mkdir -p $VBL_DIR; then
+    echo "Unable to create VBL directory $VBL_DIR" 1>&2;
+    exit 1;
+fi;
+
+if ! mkdir -p "$input_dir"; then
+    echo "Unable to create VBL directory $input_dir" 1>&2;
+    exit 1;
+fi;
+
+if ! mkdir -p "$output_dir"; then
+    echo "Unable to create VBL directory $output_dir" 1>&2;
+    exit 1;
+fi;
+
+# Make sure the VBL JAR file exists.
+vbl_jar="$VBL_DIR/vbl-${VBL_VERSION}.jar"
+if [[ ! -f "$vbl_jar" ]]; then
+    echo "Downloading VBL executable from $VBL_JAR_URL_BASE/vbl-${VBL_VERSION}.jar" 1>&2;
+    if ! aws s3 cp "$VBL_JAR_URL_BASE/vbl-${VBL_VERSION}.jar" "$vbl_jar"; then
+        echo "Download failed: $VBL_JAR_URL_BASE/vbl-${VBL_VERSION}.jar" 1>&2;
+        exit 1;
+    fi;
+fi;
+
+echo "Downloading VBL input files from $src_prefix" 1>&2;
+echo aws s3 sync $src_prefix $input_dir
+if ! aws s3 sync "$src_prefix" "$input_dir"; then
+    echo "Failed to download $VBL_INPUT" 1>&2;
+    exit 1;
+fi;
+
+# Make sure we can upload outputs to S3 before invoking VBL (to avoid wasted
+# CPU cycles).
+touch $output_dir/test || exit 1;
+if ! aws s3 cp "$output_dir/test" "$VBL_OUTPUT/test"; then
+    echo "Unable to write to $VBL_OUTPUT" 1>&2;
+    rm -f $output_dir/test
+    exit 1;
+fi;
+aws s3 rm "$VBL_OUTPUT/test"
+rm -f $output_dir/test
+
+# Forcibly set the output directory -- set this at the top of the file and
+# remove any outputdir= directives from the input.
+mv "$input_file" "$input_file.in"
+echo "outputdir=\"${output_dir}\"" > "$input_file"
+egrep -v -i '^[[:space:]]*outputdir[[:space:]]*=' "$input_file.in" >> "$input_file"
+
+echo "Invoking VBL" 1>&2;
+echo $JAVA $JAVA_ARGS -jar $vbl_jar $VBL_ARGS input $input_file 1>&2;
+# Run VBL
+cd $VBL_DIR
+if ! $JAVA $JAVA_ARGS -jar "$vbl_jar" $VBL_ARGS input "$input_file"; then
+    echo "VBL run failed" 1>&2;
+    exit 1;
+fi;
+
+echo "Uploading output to S3" 1>&2;
+# Copy the output back to S3.
+if ! aws s3 sync "$output_dir" "$VBL_OUTPUT"; then
+    echo "Failed to upload output." 1>&2;
+    echo "Check for files in $output_dir" 1>&2;
+    exit 1;
+fi;
+
