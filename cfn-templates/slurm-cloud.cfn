@@ -16,12 +16,6 @@
             "Description": "External packages to install from SLURMS3Root/packages"
         },
 
-        "ComputeOSPackages": {
-            "Type": String,
-            "Default": "",
-            "Description": "OS packages to install via yum"
-        },
-
         "ComputeInstanceType": {
             "Type": "String",
             "Default": "c3.8xlarge",
@@ -43,6 +37,12 @@
             ],
             "ConstraintDescription":
             "must be an instance type supporting 64-bit HVM images"
+        },
+
+        "ComputeOSPackages": {
+            "Type": String,
+            "Default": "",
+            "Description": "OS packages to install via yum"
         },
 
         "ControllerInstanceType": {
