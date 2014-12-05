@@ -7,7 +7,8 @@ from boto.ec2.networkinterface import (
     NetworkInterfaceCollection, NetworkInterfaceSpecification)
 from .clusterconfig import ClusterConfiguration
 from .instanceinfo import get_instance_id, get_region, get_vpc_id
-from sys import argv, stderr
+import sys
+from sys import argv
 from time import gmtime, sleep, strftime, time
 
 amazon_linux_ami = {
@@ -68,9 +69,15 @@ chmod 755 /usr/bin/slurm-ec2-bootstrap
 /usr/bin/slurm-ec2-bootstrap --slurm-s3-root '%(slurm_s3_root)s'
 """
 
+def start_logging():
+    fd = open("/var/log/slurm/slurm-ec2-powersave.log", "a")
+    sys.stdout = sys.stderr = fd
+
 def start_node():
+    start_logging()
+
     if len(argv) != 2:
-        print("Usage: %s <nodename>" % (argv[0],), file=stderr)
+        print("Usage: %s <nodename>" % (argv[0],), file=sys.stderr)
         return 1
 
     nodename = argv[1]
@@ -81,7 +88,7 @@ def start_node():
     
     if not ec2:
         print("Could not connect to EC2 endpoint in region %r" % (region,),
-              file=stderr)
+              file=sys.stderr)
         return 1
 
     kw = {}
@@ -165,18 +172,19 @@ def start_node():
                     instance.id for instance in reservation.instances], tags)
                 break
             except Exception as e:
-                print("Failed to tag instance: %s" % e, file=stderr)
+                print("Failed to tag instance: %s" % e, file=sys.stderr)
                 sleep(0.5 * i)
     else:
-        print("request_spot_instances: %r" % kw, file=stderr)
+        print("request_spot_instances: %r" % kw, file=sys.stderr)
         requests = ec2.request_spot_instances(**kw)
         print("requests: %s" % " ".join([request.id for request in requests]))
 
     return 0
 
 def stop_node():
+    start_logging()
     if len(argv) != 2:
-        print("Usage: %s <nodename>" % (argv[0],), file=stderr)
+        print("Usage: %s <nodename>" % (argv[0],), file=sys.stderr)
         return 1
 
     nodename = argv[1]
