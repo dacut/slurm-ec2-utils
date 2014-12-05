@@ -77,11 +77,19 @@
         },
 
         "KeyName": {
-            "Type": "AWS::EC2::KeyPair::KeyName",
+            "Type": "String",
             "Description": "The SSH key to use for accessing the instance",
             "MinLength": "1",
             "ConstraintDescription":
             "must be the name of an existing EC2 KeyPair"
+        },
+
+        "MaxNodes": {
+            "Type": "String",
+            "Description": "Maximum number of computation nodes to launch",
+            "Default": "9",
+            "MinLength": "1",
+            "AllowedPattern": "[1-9][0-9]{0,4}"
         },
 
         "SecurityGroup": {
@@ -151,6 +159,7 @@
                     "--region '", {"Ref": "AWS::Region"}, "' ",
                     "--slurm-s3-root '", {"Ref": "SLURMS3Root"}, "' ",
                     "--key-name '", {"Ref": "KeyName"}, "' ",
+                    "--max-nodes '", {"Ref": "MaxNodes"}, "' ",
                     "--compute-bid-price '", {"Ref": "ComputeBidPrice"}, "' ",
                     "--compute-instance-type '",
                     {"Ref": "ComputeInstanceType"}, "' ",

@@ -10,8 +10,8 @@ ARCH="`uname -m`"
 CCARGS="";
 args=`getopt -l compute-bid-price: -l compute-instance-type: \
 -l compute-external-packages: -l compute-os-packages: -l instance-profile: \
--l key-name: -l region: -l security-groups: -l slurm-s3-root: -- \
-p:i:I:k:r:s:S: "$@"`;
+-l key-name: -l max-nodes: -l region: -l security-groups: -l slurm-s3-root: -- \
+p:i:I:k:m:r:s:S: "$@"`;
 if [[ $? -eq 0 ]]; then
     eval set -- "$args";
     while [[ $# -gt 0 ]]; do
@@ -23,14 +23,12 @@ if [[ $? -eq 0 ]]; then
                 shift 2;;
 
             --compute-instance-type | -i | \
+                --compute-external-packages | --compute-os-packages | \
                 --instance-profile | -I | \
                 --key-name | -k | \
+                --max-nodes | -m | \
                 --security-groups | -s )
                 CCARGS="$CCARGS $1 $2";
-                shift 2;;
-
-            --compute-external-packages | --compute-os-packages )
-                CCARGS="$CCARGS $1 '$2'";
                 shift 2;;
 
             --region | -r )
@@ -126,16 +124,12 @@ tar -C /tmp -x -f "/tmp/$SLURM_EC2_UTILS_TGZ" -z
 (cd /tmp/slurm-ec2-utils-${SLURM_EC2_UTILS_VERSION}; python2.7 ./setup.py build && python2.7 ./setup.py install);
 rm -rf /tmp/slurm-ec2-utils-${SLURM_EC2_UTILS_VERSION} "/tmp/$SLURM_EC2_UTILS_TGZ"
 
-# Attempt to download an existing /etc/slurm-ec2.conf
 if [[ ! -r /etc/slurm-ec2.conf ]]; then
-    if ! aws s3 cp "$SLURM_S3_ROOT/etc/slurm-ec2.conf" /etc/slurm-ec2.conf; then
-        # Doesn't exist; create it and upload it.
-        slurm-ec2-clusterconfig --region "$REGION" \
-            --slurm-s3-root "$SLURM_S3_ROOT" \
-            $CCARGS \
-            --write-slurm-ec2-config /etc/slurm-ec2.conf
-        aws s3 cp /etc/slurm-ec2.conf "$SLURM_S3_ROOT/etc/slurm-ec2.conf"
-    fi;
+    # Doesn't exist; create it.
+    slurm-ec2-clusterconfig --region "$REGION" \
+        --slurm-s3-root "$SLURM_S3_ROOT" \
+        $CCARGS \
+        --write-slurm-ec2-config /etc/slurm-ec2.conf
 fi;
 
 # Create /etc/hosts and /etc/slurm.conf

@@ -27,8 +27,8 @@ init_script = """\
 #!/bin/sh
 hostname '%(nodename)s'
 instance_id=`curl --silent http://169.254.169.254/latest/meta-data/instance-id`
-aws --region %(region)s ec2 create-tags $instance_id --tags \
-'Key=SLURMHostname,Value=%(hostname)s' \
+aws --region %(region)s ec2 create-tags --resources $instance_id --tags \
+'Key=SLURMHostname,Value=%(nodename)s' \
 'Key=SLURMS3Root,Value=%(slurm_s3_root)s' \
 'Key=Name,Value=SLURM Computation Node %(nodename)s'
 cat > /etc/slurm-ec2.conf <<.EOF
@@ -99,10 +99,8 @@ def start_node():
     kw['instance_type'] = cc.compute_instance_type
 
     if cc.compute_bid_price is not None:
-        start = time()
-        end = start + 24 * 60 * 60  # FIXME: Don't hardcode this.
+        end = time() + 24 * 60 * 60  # FIXME: Don't hardcode this.
         kw['price'] = cc.compute_bid_price
-        kw['valid_from'] = strftime("%Y-%m-%dT%H:%M:%SZ", gmtime(start))
         kw['valid_until'] = strftime("%Y-%m-%dT%H:%M:%SZ", gmtime(end))
     
     node_address = cc.get_address_for_nodename(nodename)
@@ -122,6 +120,7 @@ def start_node():
         "slurm_s3_root": slurm_s3_root,
     }
     user_data = b64encode(user_data)
+    kw['user_data'] = user_data
 
     # Map the ethernet interface to the correct IP address
     eth0 = NetworkInterfaceSpecification(
@@ -132,20 +131,31 @@ def start_node():
         private_ip_address=str(node_address),
         subnet_id=node_subnet.id)
 
-    network_interfaces = NetworkInterfaceCollection(eth0)
+    kw['network_interfaces'] = NetworkInterfaceCollection(eth0)
 
     # Attach any ephemeral storage devices
     block_device_map = BlockDeviceMapping()
     block_device_map['/dev/xvda'] = BlockDeviceType(size=32, volume_type="gp2")
-    devices = cc.ephemeral_stores[instance_type]
+    devices = cc.ephemeral_stores[cc.compute_instance_type]
 
     for i, device in enumerate(devices):
         drive = "/dev/sd" + chr(ord('b') + i)
         block_device_map[drive] = BlockDeviceType(
             ephemeral_name="ephemeral%d" % i)
 
+    kw['block_device_map'] = block_device_map
+
     if cc.compute_bid_price is None:
+        print("run_instances: %r" % kw)
         reservation = ec2.run_instances(**kw)
+        tags = {
+            'SLURMHostname': nodename,
+            'SLURMS3Root': slurm_s3_root,
+            'Name': "SLURM Computation Node %s" % nodename,
+        }
+
+        print("instances: %s" %
+              " ".join([instance.id for instance in reservation.instances]))
 
         # create-tags can fail at times since the tag resource database is
         # a bit behind EC2's actual state.
@@ -154,10 +164,13 @@ def start_node():
                 ec2.create_tags([
                     instance.id for instance in reservation.instances], tags)
                 break
-            except:
+            except Exception as e:
+                print("Failed to tag instance: %s" % e, file=stderr)
                 sleep(0.5 * i)
     else:
-        reservation = ec2.request_spot_instances(**kw)
+        print("request_spot_instances: %r" % kw, file=stderr)
+        requests = ec2.request_spot_instances(**kw)
+        print("requests: %s" % " ".join([request.id for request in requests]))
 
     return 0
 
