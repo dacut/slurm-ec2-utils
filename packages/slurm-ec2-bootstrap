@@ -18,7 +18,7 @@ if [[ $? -eq 0 ]]; then
         case $1 in
             --compute-bid-price | -p )
                 if [[ "$2" != "" && "$2" != " " && "$2" != "ondemand" ]]; then
-                    CCARGS="$CCARGS $1 $2";
+                    CCARGS="$CCARGS $1 \"$2\"";
                 fi;
                 shift 2;;
 
@@ -28,7 +28,7 @@ if [[ $? -eq 0 ]]; then
                 --key-name | -k | \
                 --max-nodes | -m | \
                 --security-groups | -s )
-                CCARGS="$CCARGS $1 $2";
+                CCARGS="$CCARGS $1 \"$2\"";
                 shift 2;;
 
             --region | -r )
@@ -126,7 +126,7 @@ rm -rf /tmp/slurm-ec2-utils-${SLURM_EC2_UTILS_VERSION} "/tmp/$SLURM_EC2_UTILS_TG
 
 if [[ ! -r /etc/slurm-ec2.conf ]]; then
     # Doesn't exist; create it.
-    slurm-ec2-clusterconfig --region "$REGION" \
+    eval slurm-ec2-clusterconfig --region "$REGION" \
         --slurm-s3-root "$SLURM_S3_ROOT" \
         $CCARGS \
         --write-slurm-ec2-config /etc/slurm-ec2.conf
