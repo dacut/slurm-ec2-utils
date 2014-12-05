@@ -76,6 +76,8 @@ def start_logging():
 def start_node():
     start_logging()
 
+    print(" ".join(argv))
+
     if len(argv) != 2:
         print("Usage: %s <nodename>" % (argv[0],), file=sys.stderr)
         return 1
@@ -183,6 +185,9 @@ def start_node():
 
 def stop_node():
     start_logging()
+
+    print(" ".join(argv))
+
     if len(argv) != 2:
         print("Usage: %s <nodename>" % (argv[0],), file=sys.stderr)
         return 1
@@ -194,6 +199,12 @@ def stop_node():
     ec2 = boto.ec2.connect_to_region(region)
 
     instances = ec2.get_only_instances(filters={"tag:SLURMHostname": nodename})
-    ec2.terminate_instances([instance.id for instance in instances])
+    if len(instances) == 0:
+        print("No instances found for %r" % nodename)
+        return 1
+
+    instance_ids = [instance.id for instance in instances]
+    print("Terminating instance(s): %s" % " ".join(instance_ids))
+    ec2.terminate_instances(instance_ids)
     return 0
 

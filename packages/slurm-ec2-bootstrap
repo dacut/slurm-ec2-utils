@@ -45,6 +45,27 @@ if [[ $? -eq 0 ]]; then
     done;
 fi;
 
+if [[ -z "$SLURM_S3_ROOT" ]]; then
+    # Attempt to devine this from /etc/slurm-ec2.conf.
+    if [[ ! -r /etc/slurm-ec2.conf ]]; then
+        echo "Unable to determine SLURMS3Root" 1>&2;
+        exit 1;
+    fi;
+
+    SLURM_S3_ROOT="`grep slurm_s3_root /etc/slurm-ec2.conf | \
+                    sed -e 's/^ *slurm_s3_root *= *//' -e 's/ *$//'`";
+    if [[ -z "$SLURM_S3_ROOT" ]]; then
+        echo "Unable to determine SLURMS3Root" 1>&2;
+        exit 1;
+    fi;
+fi;
+
+if [[ -z "$REGION" ]]; then
+    # Get the region from the instance information.
+    REGION="`curl --silent http://169.254.169.254/latest/meta-data/placement/availability-zone | \
+             sed -e 's/.$//'`";
+fi;
+
 MUNGE_RPM="munge-$MUNGE_VERSION.$ARCH.rpm"
 SLURM_RPM="slurm-$SLURM_VERSION.$ARCH.rpm"
 MUNGE_URL="$SLURM_S3_ROOT/packages/$MUNGE_RPM"
